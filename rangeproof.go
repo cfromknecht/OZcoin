@@ -1,12 +1,13 @@
-package cloakcoin
+package zebracoin
 
 import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
 	"math/big"
 )
+
+const RANGE_PROOF_LENGTH = 32
 
 type PublicRangeProof struct {
 	E   SHA256Sum
@@ -32,13 +33,13 @@ func (s RangeProof) HashPKs() SHA256Sum {
 func RangeSign(amt uint64, targetBlind *big.Int) RangeProof {
 	sig := RangeProof{}
 
+	// Compute PKs and blinds for amt
 	sumBlind := &big.Int{}
 	for i := uint64(0); i < RANGE_PROOF_LENGTH; i++ {
 		r := &big.Int{}
 		if i == RANGE_PROOF_LENGTH-1 {
-			r = RandomInt()
 			r.Sub(targetBlind, sumBlind)
-			sumBlind.Add(sumBlind, r)
+			r.Mod(r, CURVE.Params().N)
 		} else {
 			r = RandomInt()
 			sumBlind.Add(sumBlind, r)
@@ -47,10 +48,6 @@ func RangeSign(amt uint64, targetBlind *big.Int) RangeProof {
 		sig.Blinds[i] = r
 		sig.PKs[i] = PKsForAmt(amt, i, r)
 	}
-
-	fmt.Println("[RangeSign]")
-	fmt.Println("targetBlind:", targetBlind)
-	fmt.Println("sumBlind:", sumBlind)
 
 	hashM := sig.HashPKs()
 
@@ -105,6 +102,7 @@ func (rs RangeProof) Verify() bool {
 		e0data = append(e0data, r2.Bytes()...)
 	}
 	e0Prime := sha256.Sum256(e0data)
+
 	return bytes.Compare(rs.E[:], e0Prime[:]) == 0
 }
 

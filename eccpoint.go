@@ -1,10 +1,8 @@
-package cloakcoin
+package zebracoin
 
 import (
 	"math/big"
 )
-
-type SHA256Sum [32]byte
 
 type ECCPoint struct {
 	X, Y *big.Int

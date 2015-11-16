@@ -1,4 +1,4 @@
-package cloakcoin
+package zebracoin
 
 import (
 	"crypto/elliptic"
@@ -11,26 +11,26 @@ var (
 	H     = computeH()
 )
 
-type PublicRangedPedersenCommitment struct {
+type PublicCommitment struct {
 	ECCPoint
 	PublicRangeProof
 }
 
-type RangedPedersenCommitment struct {
+type Commitment struct {
 	ECCPoint
 	Proof RangeProof
 	Blind *big.Int
 	Amt   uint64
 }
 
-func (c RangedPedersenCommitment) Public() PublicRangedPedersenCommitment {
-	return PublicRangedPedersenCommitment{
+func (c Commitment) Public() PublicCommitment {
+	return PublicCommitment{
 		c.ECCPoint,
 		c.Proof.PublicRangeProof,
 	}
 }
 
-func RangedCommit(amt uint64, targetBlind *big.Int) RangedPedersenCommitment {
+func RangeCommit(amt uint64, targetBlind *big.Int) Commitment {
 	rp := RangeSign(amt, targetBlind)
 
 	x, y := &big.Int{}, &big.Int{}
@@ -44,20 +44,7 @@ func RangedCommit(amt uint64, targetBlind *big.Int) RangedPedersenCommitment {
 		sum += (uint64(1) << i) & amt
 	}
 
-	fmt.Println("[RangedCommit]")
-	fmt.Println("targetBlind:", targetBlind)
-	fmt.Println("sumBlind:", sumBlind)
-
-	amtBytes := UIntBytes(amt)
-
-	xGx, xGy := CURVE.Params().ScalarBaseMult(targetBlind.Bytes())
-	aHx, aHy := CURVE.Params().ScalarMult(H.X, H.Y, amtBytes[:])
-
-	cx, cy := CURVE.Params().Add(xGx, xGy, aHx, aHy)
-	fmt.Println("Cx:", y, "Cy:", x)
-	fmt.Println("x:", cx, "y:", cy)
-
-	return RangedPedersenCommitment{
+	return Commitment{
 		ECCPoint: ECCPoint{x, y},
 		Proof:    rp,
 		Blind:    sumBlind,
@@ -65,31 +52,29 @@ func RangedCommit(amt uint64, targetBlind *big.Int) RangedPedersenCommitment {
 	}
 }
 
-func (c RangedPedersenCommitment) Verify() bool {
+func (c Commitment) Verify() bool {
 	amtBytes := UIntBytes(c.Amt)
 
 	xGx, xGy := CURVE.Params().ScalarBaseMult(c.Blind.Bytes())
 	aHx, aHy := CURVE.Params().ScalarMult(H.X, H.Y, amtBytes[:])
 
 	x, y := CURVE.Params().Add(xGx, xGy, aHx, aHy)
-	fmt.Println("Cx:", c.X, "Cy:", c.Y)
-	fmt.Println("x:", x, "y:", y)
 
 	return c.Proof.Verify() &&
 		x.Cmp(c.X) == 0 &&
 		y.Cmp(c.Y) == 0
 }
 
-func CommitTxn(inputs, outputs []uint64) ([]RangedPedersenCommitment,
-	[]RangedPedersenCommitment) {
-	pcsi := make([]RangedPedersenCommitment, len(inputs))
-	pcso := make([]RangedPedersenCommitment, len(outputs))
+func CommitTxn(inputs, outputs []uint64) ([]Commitment,
+	[]Commitment) {
+	pcsi := make([]Commitment, len(inputs))
+	pcso := make([]Commitment, len(outputs))
 
 	inTotal := &big.Int{}
 	for i, inAmt := range inputs {
 		r := RandomInt()
 		inTotal.Add(inTotal, r)
-		pcsi[i] = RangedCommit(inAmt, r)
+		pcsi[i] = RangeCommit(inAmt, r)
 	}
 
 	outTotal := &big.Int{}
@@ -97,25 +82,20 @@ func CommitTxn(inputs, outputs []uint64) ([]RangedPedersenCommitment,
 		r := &big.Int{}
 		if i == len(outputs)-1 {
 			r.Sub(inTotal, outTotal)
-			outTotal.Add(outTotal, r)
+			r.Mod(r, CURVE.Params().N)
 		} else {
 			r = RandomInt()
 			outTotal.Add(outTotal, r)
 		}
 
-		fmt.Println("[CommitTxn]")
-		fmt.Println("targetBlind:", inTotal)
-		fmt.Println("sumBlind:", outTotal)
-
-		pcso[i] = RangedCommit(outAmt, r)
+		pcso[i] = RangeCommit(outAmt, r)
 	}
 
 	return pcsi, pcso
 }
 
-func SumZero(pcsi, pcso []RangedPedersenCommitment) bool {
-	x, y := &big.Int{}, &big.Int{}
-	fmt.Println("[SumZero]")
+func SumZero(pcsi, pcso []Commitment) bool {
+	ix, iy := &big.Int{}, &big.Int{}
 
 	for i, c := range pcsi {
 		if !c.Verify() {
@@ -123,25 +103,19 @@ func SumZero(pcsi, pcso []RangedPedersenCommitment) bool {
 			return false
 		}
 
-		x, y = CURVE.Params().Add(x, y, c.X, c.Y)
+		ix, iy = CURVE.Params().Add(ix, iy, c.X, c.Y)
 	}
 
+	ox, oy := &big.Int{}, &big.Int{}
 	for i, c := range pcso {
 		if !c.Verify() {
 			fmt.Println("c", i, "failed to verify")
 			return false
 		}
-
-		negCy := &big.Int{}
-		negCy.Neg(c.Y)
-		x, y = CURVE.Params().Add(x, y, c.X, negCy)
+		ox, oy = CURVE.Params().Add(ox, oy, c.X, c.Y)
 	}
 
-	fmt.Println("final x:", y, "final y:", x)
-
-	zero := &big.Int{}
-
-	return zero.Cmp(x) == 0 && zero.Cmp(y) == 0
+	return ix.Cmp(ox) == 0 && iy.Cmp(oy) == 0
 }
 
 func pointFromRAndAmt(r *big.Int, amt int64) (*big.Int, *big.Int) {

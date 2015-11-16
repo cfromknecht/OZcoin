@@ -1,0 +1,342 @@
+\documentclass{article}
+\pagestyle{headings} % for page numbering
+
+%\pagestyle{headings}
+\usepackage[dvips]{graphics,color}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{latexsym}
+\usepackage{framed}
+\usepackage{enumitem}
+
+\usepackage[square,numbers]{natbib}
+\bibliographystyle{abbrvnat}
+
+\usepackage{hyperref}
+
+\usepackage[disable]{todonotes}
+
+\newcommand{\algoname}[1]{\textnormal{\textsc{#1}}}
+
+\newcommand{\nizkpok}{\algoname{NiZKPoK}}
+\newcommand{\gen}{\algoname{Gen}}
+\newcommand{\sign}{\algoname{Sign}}
+\newcommand{\verify}{\algoname{Verify}}
+\newcommand{\link}{\algoname{Link}}
+
+\newcommand{\sidx}{\ensuremath{*}}
+
+\newcommand{\pkset}{\ensuremath{X}}
+
+\newcommand{\ix}{\ensuremath{x_i}}
+\newcommand{\sx}{\ensuremath{x_\sidx}}
+
+\newcommand{\ipk}{\ensuremath{X_i}}
+\newcommand{\spk}{\ensuremath{X_\sidx}}
+
+\newcommand{\iy}{\ensuremath{y_i}}
+\newcommand{\sy}{\ensuremath{y_\sidx}}
+\newcommand{\oy}{\ensuremath{y^\prime}}
+\newcommand{\oiy}{\ensuremath{y^\prime_i}}
+
+\newcommand{\iC}{\ensuremath{C_i}}
+\newcommand{\sC}{\ensuremath{C_\sidx}}
+\newcommand{\oC}{\ensuremath{C^\prime}}
+\newcommand{\oiC}{\ensuremath{C^\prime_i}}
+
+\newcommand{\iv}{\ensuremath{v_i}}
+\newcommand{\sv}{\ensuremath{v_\sidx}}
+\newcommand{\ov}{\ensuremath{v^\prime}}
+\newcommand{\oiv}{\ensuremath{v^\prime_i}}
+
+\newcommand{\setI}{\ensuremath{\mathcal{I}}}
+
+\newcommand{\hs}{\ensuremath{\mathcal{H}_S}}
+\newcommand{\hp}{\ensuremath{\mathcal{H}_P}}
+
+\begin{document}
+
+\title{One-Time, Zero-Sum Ring Signature}
+
+\author{Conner Fromknecht}
+\date{\today}
+
+\maketitle
+
+\section{Introduction}
+  
+Is Bitcoin a currency?  The jurisdictions of institutions all over the world
+have culminated in everything but a unanimous decision.  In practice, Bitcoin
+offers the majority of features present in typical fiat currencies such as
+payments of arbitrary amount and exchanges for another currency.  However,
+Bitcoin fails to meet one of the key properties of a true currency\textemdash
+fungibility.
+
+Not all Bitcoins are created equal.  Since the transaction history is public, so
+too are the balances and payments made by its participants.  After any
+transaction is completed, the receiver is able to view the complete history of
+the coin. If the coin's history includes transactions that are known to be a
+part of a scandal, the receiver can choose to reject the payment.  This
+inherently makes some Bitcoin less valuable than others, since accepting tainted
+coins assumes the risk that the next receiver may not accept them.  By
+definition, this inequality between coins prevents Bitcoin from being fungible.
+
+The goal of this work is to design a more fungible cryptocurrency.  In order to
+do so, we tackle two distinct problems that allow a third party to discriminate
+against the coins used in a standard Bitcoin transaction.  The first is
+linkability, which allows an individual to trace the history of a transaction
+and determine the accounts that have held the coin before.  This work builds
+upon  much of CryptoNote's \cite{S13} anonymous transaction scheme to ensure
+the destination is obfuscated, preventing third parties from explicitly
+backwards constructing a path to the sender.  
+
+However, this alone is not enough.  The transaction amounts are still visible,
+which allows any two transactions of equal amounts to be possibly linked, and
+thus jeopardizing unlinkability.  Therefore, our solution must also hide
+transaction amounts.  This work begins with a similar approach to the one
+outlined by Gregory Maxwell's Confidential Transaction scheme \cite{M15}.  This
+allows the sender to prove that the value is within a certain range, say
+$[0,2^l)$.  In order to publicly verify this, the signer must coordinate the
+blinding factors and amounts of different inputs such that they result in a zero
+sum.  However, when using CryptoNote's ring signatures, the signer has no
+control over the blinding factors of other inputs.  Thus, we propose a new ring
+signature construction, called a One-Time, Zero-Sum Ring Signature (OZRS) that
+proves the output amount is equal to exactly one of the committed input values.
+It also proves that a commitment receives a new blinding factor after each
+transaction and allows only the recipient to learn the amount enclosed.
+Furthermore, the size of an OZRS is the same as the One-Time Ring Signatures
+used in the standard CryptoNote protocol.
+
+By combining the unlinkability and confidentiality properties of this work, the
+receiver of a transaction is able to verify its amount but also learns
+substantially less about the coin's history.  Since this is true for any future
+recipient, the receiver can accept the payment as is with greater certainty that
+it will not be rejected by another party.
+
+\section{Construction}
+
+Building on CryptoNote's architecture, this work requires relatively simple
+changes to the high level protocol.  The modifications include adding a single
+field to a transaction output and replacing the One-Time Ring Signature with an
+OZRS.  Furthermore, every transaction amount is committed using a Pedersen
+Commitment and accompanied by a range proof using the Borromean scheme described
+in \cite{MP15}.  For simplicity, we assume that the range proof is done in
+binary, but the results can be extended to any publicly known encoding.
+
+\subsection{Transactions}
+
+Here we describe how to construct a single output transaction, where some user
+is trying to send the value {\ov} to the standard address $(A=aG, B=bG)$.  These
+steps operate in addition to the unmodified CryptoNote protocol, unless
+otherwise specified here.
+
+When building a single output transaction, the signer also chooses a random
+number $q \in Z_N$ and adds the {\em blind seed} $Q=qG$ to the transaction
+output.  The signer then computes $\oy = \hs(qB)$ which is called the {\em
+output blinding factor}, where $B$ is taken to be the receiver's public key.
+Using $\oy$, the output commitment $\oC = \oy G + \ov H$ is constructed by first
+deterministically generating blinding factors $\gamma^{(i)}$ to commit each of
+the $l$ bits $\beta_i$ in {\ov}.  These blinding factors are computed by
+\begin{align*}
+  \gamma^{(1)} &= \hs(\oy) \\
+  \gamma^{(i+1)} &= 
+    \begin{cases}
+      \oy - \sum_{j=1}^{i} \gamma^{(j)} &: i=l-1 \\
+      \hs(\gamma^{(i)}) &: otherwise.
+    \end{cases}
+\end{align*}
+The signer then outputs the final $\oC = \sum_{i=1}^l c_i$, where $c_i =
+\gamma^{(i)} G + \beta_i H$ and $\beta_i$ is either $2^i$ or 0 depending on the
+$i^{th}$ bit of {\ov}.  Each $c_i$ and $\gamma^{(i)}$ is further used to
+construct the range proof of $\oC$ using the techniques in \cite{MP15}.
+
+A receiver uses the blind seed to compute $\oy = \hs(bQ)$ where $b$ is taken to
+be the receiver's super secret private key.  A receiver with knowledge of $\oy$
+is also able to recover each of the $\gamma^{(i)}$ blinding factors.  Then, he
+can recover the bits of {\ov} by checking $c_i - \gamma^{(i)} G = 0$ or $d_i -
+\gamma^{(i)} G = 0$, where the challenge public key $d_i = c_i - 2^i H$.  If the
+first is true, then $\beta_i=0$; if the second check passes then $\beta_i=2^i$.
+Note that the signer of a transaction could pick $Q^\prime \neq qG$, which
+results in different $\gamma^{(i)}$ with high probability.  The receiver can
+easily detect this event if both $c_i$ and $d_i$ failed the above test.  In this
+case, the receiver should not accept the transaction as payment, since he will
+be unable to spend it.
+
+\subsubsection{Multiple Outputs}
+
+Supporting transactions with $m$ outputs only requires a small modification to
+the single output case.  We compute one $\oiC = \oiy G + \oiv H$ for each output
+amount as described above, providing a range proof for each.  We then compute
+$\oC = \sum_{i=1}^m \oiC$ and $\oy = \sum_{i=1}^m \oiy$.  Note that each output
+now has its own blind seed, so they can each be recovered independently.
+Lastly, instead of creating a single transaction public key $R=rG$, we create
+one for each output.  This allows the outputs of a transaction to be spent
+independently of each other, much like how they are in Bitcoin.
+
+\subsubsection{Transaction Structure}
+
+This section describes the format of a transaction incorporating the above
+changes.  The construction of the OZRS is described in the subsequent section.
+\begin{align*} 
+  & \text{\bf{INPUT}}       &&                                           \\%&& \\
+  & \text{Key Image: } && I = \sx \hp(\sx)                                \\%&& [33 \text{ bytes}] \\
+  & \text{Input Transaction Hashes: } && \{ \hs(T_i) \}_n                 \\%&& [32n \text{ bytes}] \\
+  & \text{\bf{OUTPUT}}     &&                                            \\%&& \\
+  & \text{Transaction Public Keys: } && \{ R_i = r_i G \}_m               \\%&& [33m \text{ bytes}] \\
+  & \text{Destination Keys: } && \{ P_i = \hs(r_i A_i)G + B_i \}_m        \\%&& [33m \text{ bytes}] \\
+  & \text{Blind Seeds: } && \{ Q_i = q_i G \}_m                           \\%&& [33m \text{ bytes}] \\
+  & \text{Commitments: } && \{ \oiC = \oiy G + \oiv H \}_m                \\%&& [33m \text{ bytes}] \\
+  & \text{Range Proofs: } && \{ \pi_l(\oiC) \}_m                          \\%&& [(33l + 32(2l+1))m \text{ bytes}] \\
+  & \text{\bf{SIGNATURE}} &&                                              \\%&& \\
+  & \text{OZRS: } && \Pi = (e, r_1, \dots, r_n, s_1, \dots, s_n)          \\%&& [32(2n+1) \text{ bytes}] 
+\end{align*} 
+
+\subsection{One-Time, Zero-Sum Ring Signature}
+
+For any transaction with $n$ inputs and $m$ outputs, let $\pkset = \{ \ipk = \ix
+G\}_{i \in [1,n]}$ be the set of input destination keys and $\sidx \in [1,n]$ to
+be the index of signer's public key {\spk}.  Furthermore, let $C = \{ {\iC} =
+{\iy} G + \iv H \}_{i \in [1,n]}$ be the set input commitments, where each $\iC$
+commits each {\ipk} to the value {\iv}.  We call each {\iy} an input blinding
+factor.  After constructing a transaction, the signer also holds the new output
+blinding factor {\oy} and total output value {\ov} in
+\[ \oC = \oy G + \ov H = \sum_{i=1}^{m} \oiC = \sum_{i=1}^m \oiy G + \oiv H ,\]
+where each $\oiC$ represents an individual output commitment.  Here we present
+a ring signature formulation constructed as an AOS ring signature \cite{AOS02}
+that uses a three-way chameleon hash to prove the following properties:
+\begin{enumerate}
+  \item The signer knows at least one secret key {\ix} for a public key {\ipk}
+
+  \item The signer knows the secret key {\sx} corresponding to the preimage $I =
+  {\sx} \hp({\spk})$ of {\spk}.
+
+  \item The sum of the output commitments {\oC} holds a value equal to the
+  sender's input {\sC}.
+\end{enumerate}
+More formally, the ring signature is a Non-Interactive, Zero-Knowledge Proof of
+Knowledge on a message $M$ such that all values other than {\sx}, {\sy}, and
+{\oy} are known to the prover, defined 
+\begin{align*}
+\nizkpok[M](\sx, \sy, \oy) : \{ \exists i : 
+& ~ \oC - \iC = (\oy - \iy)G \\
+& \land \spk = \ix G \\
+& \land I = \sx \hp(\ipk)\}.
+\end{align*}
+
+The One-Time, Zero-Sum Ring Signature scheme consists of the four operations
+({\gen}, {\sign}, {\verify}, {\link}).  
+\begin{itemize}
+  \item ${\gen}(N, G) \rightarrow (a, A)$
+
+    Choose $a \leftarrow Z_N$ at random. \\
+    Compute $A=aG$ and output $(a, A)$.
+
+\ \\
+
+  \item ${\sign}(M, C, {\oC}, {\oy}, {\sy}, {\sx}, X) \rightarrow \Pi $
+
+    Compute the signing key's preimage and commitment differences
+    \begin{align}
+      I   &= {\sx} \hp({\spk}) \\
+      D_i &= {\oC} - {\iC} = ({\oy} - {\iy}) G.
+    \end{align}
+    Next, we build the non-interactive challenge $e$.  Choose $k_1, k_2
+    \leftarrow Z_N^2$ at random.  Starting at index $*$, compute
+    \[ e_*^{(1)} = \hs(M ~ || ~ k_1 G ~ || ~ k_2 G ~ || ~ k_2 \hp(\spk) )\]
+    Continue computing successive $e_i^{(\cdot)}$, wrapping around after $i=n$,
+    until $e_{*-1}^{(2)}$ using the following steps 
+    \begin{align} 
+      r_i, s_i &\leftarrow Z_N^2 \\
+      e_i^{(2)} &= \hs(e_i^{(1)}) \\
+      e_{i+1}^{(1)} &= \hs(M ~ || ~ r_iG - e_i^{(1)}D_i ~ || ~ s_iG - e_i^{(2)}{\ipk} ~ || ~ s_i \hp({\ipk}) - e_i^{(2)}I)
+    \end{align}
+    Lastly, we set $r_{*-1}, s_{*-1}$ so that the hash hits $e_*^{(1)}$
+    by
+    \begin{align*}
+      r_{*-1} &= k_1 + e_{*-1}^{(1)}({\oy} - {\sy}) \\
+      s_{*-1} &= k_2 + e_{*-1}^{(2)}{\sx}
+    \end{align*}
+    Assign $e=e_1^{(1)}$ and output the final proof 
+    $\Pi = (e, r_1, \dots, r_n, s_1, \dots, s_n)$.
+
+\ \\
+
+  \item ${\verify}(\Pi, M, C, {\oC}, X, I) \rightarrow \{0,1\} $
+
+    First compute each commit difference $D_i$ using equation (2).  Starting
+    with $e=e_1^{(1)}$, compute the forward $e_i^{(\cdot)}$ for $i \in [1, n]$
+    using relations (4) and (5).  The verifier then checks that 
+    \[e = \hs(M ~ 
+    || ~ r_nG - e_n^{(1)}D_n ~ 
+    || ~ s_nG - e_n^{(2)}X_n ~ 
+    || ~ s_n \hp(X_n) - e_n^{(2)}I)\]
+    and ${\link}(I)$ fails.  If both of these are met, return 1. Otherwise, return
+    0.
+
+\ \\
+
+  \item $\link(I) \rightarrow \{0,1\}$
+
+  Let {\setI} be the set of all spent preimages.  Return 1 if $I \in {\setI}$,
+  otherwise return 0.
+\end{itemize}
+
+\section{Security}
+
+Below we present the security proofs for the OZRS scheme.  These proofs are
+similar to those in the original CryptoNote paper \cite{S13}, with the added
+property divisibility, which is demonstrated in a manner that maintains the
+confidentiality of the committed inputs.
+
+The security properties are:
+\begin{itemize}
+  \item {\bf Linkability:} Given the secret keys $\{\ix\}_n$ and each
+  corresponding public key {\ipk}, it is impossible to produce $n+1$ valid
+  signatures $\{\Pi_j\}_{n+1}$ such that all of them have different preimages
+  $I_j$.
+
+  \item {\bf Exculpability:} Given the public keys $X=\{\ipk\}_n$, at most
+  $n-1$ secret keys {\ix} excluding $i = *$, and the preimage $I_*=\sx
+  \hs(\spk)$, it is impossible to produce a valid signature $\Pi$ with $I_*$.
+
+  \item {\bf Unforgeability:} Given the public keys $X=\{\ipk\}_n$, it is
+  impossible to produce a valid signature $\Pi$.
+  
+  \item {\bf Anonymity:} Given a signature $\Pi$ and its corresponding public
+  keys $X=\{\ipk\}_n$, it is impossible to determine the index $*$ of the signing
+  key with probability $p > \frac{1}{n}$.
+
+  \item {\bf Divisibility:} Given the set of input commitments $C=\{\iC\}_n$
+  each committing to the value $a_i$ and the sum of the output commitments {\oC}
+  committing to $a^\prime$, it is impossible to create a signature $\Pi$ such
+  that $a^\prime \neq a_*$.
+
+\end{itemize}
+
+\subsection{Linkability}
+
+{\bf Theorem 1:} OZRS is linkable under the random oracle model.
+
+\subsection{Exculpability}
+
+{\bf Theorem 2:} OZRS is exculpable under the discrete logarithm assumption in
+the random oracle model.
+
+\subsection{Unforgeability}
+
+{\bf Theorem 3:} If OZRS is linkable and exculpable, then it is unforgeable.
+
+\subsection{Anonymity}
+
+{\bf Theorem 4:} OZRS is exculpable under the decisional Diffie-Hellman
+assumption in the random oracle model.
+
+\subsection{Divisibility}
+
+{\bf Theorem 5:} OZRS is divisible under the random oracle model.
+
+\bibliography{bibliography}
+
+\end{document}
+

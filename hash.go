@@ -1,9 +1,22 @@
-package cloakcoin
+package zebracoin
 
 import (
 	"crypto/sha256"
 	"math/big"
 )
+
+type SHA256Sum [32]byte
+
+func Hash(data []byte) SHA256Sum {
+	return sha256.Sum256(data)
+}
+
+func HashToPt(data []byte) ECCPoint {
+	h := Hash(data)
+	x, y := CURVE.Params().ScalarBaseMult(h[:])
+
+	return ECCPoint{x, y}
+}
 
 func HashPt(m []byte, p ECCPoint) SHA256Sum {
 	data := []byte{}

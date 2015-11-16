@@ -1,4 +1,4 @@
-package cloakcoin
+package zebracoin
 
 import (
 	"crypto/rand"
@@ -6,8 +6,6 @@ import (
 	"log"
 	"math/big"
 )
-
-const RANGE_PROOF_LENGTH = 32
 
 func RandomBytes() SHA256Sum {
 	buf := SHA256Sum{}
