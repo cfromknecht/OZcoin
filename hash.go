@@ -5,7 +5,9 @@ import (
 	"math/big"
 )
 
-type SHA256Sum [32]byte
+const SHA256_SUM_LENGTH = 32
+
+type SHA256Sum [SHA256_SUM_LENGTH]byte
 
 func Hash(data []byte) SHA256Sum {
 	return sha256.Sum256(data)

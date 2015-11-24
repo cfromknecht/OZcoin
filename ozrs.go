@@ -1,6 +1,7 @@
 package ozcoin
 
 import (
+	"bytes"
 	"math/big"
 )
 
@@ -66,6 +67,29 @@ func (txn Txn) OZRSSign(pks []ECCPoint,
 	txn.Sig.E = es[0]
 	txn.Sig.Rs = rs
 	txn.Sig.Ss = ss
+}
+
+func (txn Txn) VerifyOZRS(pks []ECCPoint, ics []Commitment) bool {
+	M := txn.BodyJson()
+	hashM := Hash(M)
+
+	// Calculate commit differences
+	diffs := txn.commitDifferences(ics)
+
+	// Retrieve preimage
+	pimg := txn.Sig.Preimage
+
+	es := [TXN_NUM_INPUTS]SHA256Sum{}
+	es[0] = txn.Sig.E
+
+	for i := 0; i < TXN_NUM_INPUTS-1; i++ {
+		r, s := txn.Sig.Rs[i], txn.Sig.Ss[i]
+		es[i+1] = computeE3(hashM, r, s, es[i], diffs[i], pks[i], pimg)
+	}
+	li := TXN_NUM_INPUTS - 1
+	e0 := computeE3(hashM, txn.Sig.Rs[li], txn.Sig.Ss[li], es[li], diffs[li], pks[li], pimg)
+
+	return bytes.Compare(txn.Sig.E[:], e0[:]) == 0
 }
 
 func computeE3(hashM SHA256Sum,
