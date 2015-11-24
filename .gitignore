@@ -1,0 +1,8 @@
+# vim temp files
+*.sw*
+
+# whitepaper temp files
+whitepaper/*.log
+whitepaper/*.blg
+whitepaper/*.aux
+whitepaper/*.pdf
