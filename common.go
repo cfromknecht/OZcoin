@@ -7,6 +7,12 @@ import (
 	"math/big"
 )
 
+const (
+	MAX_BLOCK_SIZE     = 2 * 1024 * 1024 * 1024 // 2 MB
+	TWO_WEEKS_SEC      = 14 * 24 * 60 * 60      // 2 weeks in seconds
+	INITIAL_DIFFICULTY = 1 << 20
+)
+
 func RandomBytes() SHA256Sum {
 	buf := SHA256Sum{}
 	_, err := rand.Read(buf[:])

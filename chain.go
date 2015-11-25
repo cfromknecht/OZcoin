@@ -3,86 +3,109 @@ package ozcoin
 import (
 	db "github.com/syndtr/goleveldb/leveldb"
 
-	"encoding/json"
+	"errors"
 	"log"
 )
 
-type Blockchain struct {
-	SVP
-	BlockDBPath string
-	UTxnDBPath  string
-	PImgDBPath  string
+func (c *Client) PrevalidBlock(b Block) bool {
+	if b.Txns == nil || len(b.Txns) == 0 {
+		return false
+	}
+
+	if !c.ValidTxns(b) {
+		return false
+	}
+
+	if !c.VerifyMerkleHash(b) {
+		return false
+	}
+
+	return true
 }
 
-func NewBlockchain() Blockchain {
-	bc := Blockchain{
-		SVP:         NewSVP(),
-		BlockDBPath: "db/block.db",
-		UTxnDBPath:  "db/utxn.db",
-		PImgDBPath:  "db/pimg.db",
+func (c *Client) ValidDifficulty(b Block) bool {
+	if b.Header.SeqNum <= 2016 {
+		return b.Header.Difficulty == INITIAL_DIFFICULTY
 	}
 
-	g := GenesisBlock()
-	for !g.Header.ValidPoW() {
-		g.Header.Nonce += 1
+	last, err := c.NthAncestorHeader(b.Header.PrevHash, 2016)
+	if err != nil {
+		log.Println(err)
+		return false
 	}
 
-	if bc.ValidBlock(g) {
-		err := bc.WriteBlock(g)
+	currTime := b.Header.Time.UnixNano()
+	lastTime := last.Time.UnixNano()
+
+	actualTime := currTime - lastTime
+	oldTarget := last.Difficulty
+
+	newTarget := oldTarget * uint64(actualTime) / TWO_WEEKS_SEC
+
+	return uint64(b.Header.Difficulty) == newTarget
+}
+
+func (c *Client) PostValidBlock(b Block) bool {
+	if !c.ValidDifficulty(b) {
+		return false
+	}
+
+	// Check median of last 11 blocks
+
+	return true
+}
+
+func (c *Client) NthAncestorHeader(hash SHA256Sum, n int) (*BlockHeader, error) {
+	prevHash := hash
+	var prevHeader *BlockHeader
+	for i := 0; i < n; i++ {
+		// Load previous header from main database
+		prevHeader, err := c.GetHeader(prevHash)
 		if err != nil {
-			log.Println(err)
-			panic("Unable to add genesis block to database")
+			return nil, err
 		}
-	} else {
-		panic("Genesis block invalid")
+
+		// Use as previous hash
+		if prevHeader == nil {
+			prevHash = prevHeader.PrevHash
+			continue
+		}
+
+		// Load previous header from sidechain database
+		prevHeader, err = c.GetSideHeader(prevHash)
+		if err != nil {
+			return nil, err
+		}
+
+		// Use as previous hash
+		if prevHeader != nil {
+			prevHash = prevHeader.PrevHash
+			continue
+		}
+
+		return prevHeader, nil
 	}
 
-	return bc
+	return prevHeader, nil
 }
 
-func (bc *Blockchain) ValidBlock(b Block) bool {
-	return bc.ValidHeader(b.Header) &&
-		bc.ValidTxns(b)
+func (c *Client) VerifyMerkleHash(b Block) bool {
+	return true
 }
 
-func (bc *Blockchain) WriteBlock(b Block) error {
-	// Write Header
-	err := bc.WriteHeader(b.Header)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-
-	// Open block database
-	blockDB, err := db.OpenFile(bc.BlockDBPath, nil)
-	if err != nil {
-		log.Println(err)
-		panic("Unable to open block database")
-	}
-	defer blockDB.Close()
-
-	// Write block
-	hash := b.Header.Hash()
-	err = blockDB.Put(hash[:], b.Json(), nil)
+func (c *Client) WriteBlock(b Block) error {
+	err := c.PutBlock(b)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
 
 	// Open transaction database
-	utxnDB, err := db.OpenFile(bc.UTxnDBPath, nil)
-	if err != nil {
-		log.Println(err)
-		panic("Unable to open utxn database")
-	}
+	utxnDB := c.OpenUTxnDB()
 	defer utxnDB.Close()
 
 	// Open preimage database
-	pimgDB, err := db.OpenFile(bc.PImgDBPath, nil)
-	if err != nil {
-		log.Println(err)
-		panic("Unable to open pimg database")
-	}
+	pimgDB := c.OpenPreimageDB()
 	defer pimgDB.Close()
 
 	// Build batched writes
@@ -110,16 +133,16 @@ func (bc *Blockchain) WriteBlock(b Block) error {
 	return nil
 }
 
-func (bc *Blockchain) ValidTxns(b Block) bool {
+func (c *Client) ValidTxns(b Block) bool {
 	// Check validity of each transaction
 	for i, txn := range b.Txns {
 		if i == 0 {
-			if !bc.ValidGenerationTxn(txn) {
+			if !c.ValidCoinbaseTxn(txn) {
 				log.Println("Invalid GenerationTxn")
 				return false
 			}
 		} else {
-			if !bc.ValidTxn(txn) {
+			if !c.ValidTxn(txn) {
 				log.Println("Invalid Txn")
 				return false
 			}
@@ -131,7 +154,7 @@ func (bc *Blockchain) ValidTxns(b Block) bool {
 	return true
 }
 
-func (bc *Blockchain) ValidTxn(txn Txn) bool {
+func (c *Client) ValidTxn(txn Txn) bool {
 	if txn.Body.Inputs == nil || len(txn.Body.Inputs) != TXN_NUM_INPUTS {
 		log.Println("Invalid number of txn inputs")
 		return false
@@ -142,7 +165,20 @@ func (bc *Blockchain) ValidTxn(txn Txn) bool {
 		return false
 	}
 
-	utxns, err := bc.fetchInputTxns(txn.Body.Inputs)
+	if len(txn.Json()) >= MAX_BLOCK_SIZE {
+		return false
+	}
+
+	for _, output := range txn.Body.Outputs {
+		if output.PublicKey.Empty() ||
+			output.DestKey.Empty() ||
+			output.BlindSeed.Empty() ||
+			output.Commit.Empty() {
+			return false
+		}
+	}
+
+	utxns, err := c.fetchInputTxns(txn.Body.Inputs)
 	if err != nil {
 		log.Println("Error fetching input txns from database")
 		return false
@@ -157,9 +193,15 @@ func (bc *Blockchain) ValidTxn(txn Txn) bool {
 	return txn.VerifyOZRS(pks, ics)
 }
 
-func (bc *Blockchain) ValidGenerationTxn(txn Txn) bool {
-	if txn.Body.Inputs != nil {
-		log.Println("Txn inputs should be nil")
+func (c *Client) ValidCoinbaseTxn(txn Txn) bool {
+	if txn.Body.Inputs == nil || len(txn.Body.Inputs) != 1 {
+		log.Println("Invalid number of txn inputs")
+		return false
+	}
+
+	input := txn.Body.Inputs[0]
+	if (input.Index != 2) || (input.Hash != SHA256Sum{}) {
+		log.Println("Invalid coinbase inputs")
 		return false
 	}
 
@@ -168,98 +210,40 @@ func (bc *Blockchain) ValidGenerationTxn(txn Txn) bool {
 		return false
 	}
 
-	return !txn.Body.Outputs[0].PublicKey.Empty() &&
-		!txn.Body.Outputs[0].DestKey.Empty() &&
-		!txn.Body.Outputs[0].BlindSeed.Empty() &&
-		!txn.Body.Outputs[0].Commit.Empty()
+	if len(txn.Json()) >= MAX_BLOCK_SIZE {
+		return false
+	}
+
+	output := txn.Body.Outputs[0]
+
+	return !output.PublicKey.Empty() &&
+		!output.DestKey.Empty() &&
+		!output.BlindSeed.Empty() &&
+		!output.Commit.Empty()
 }
 
-func (bc *Blockchain) fetchInputTxns(inputs []Input) ([]Output, error) {
+func (c *Client) fetchInputTxns(inputs []Input) ([]Output, error) {
 	utxns := []Output{}
 	for _, input := range inputs {
-		txn, err := bc.LookupTxn(input.Hash)
+		if input.Index > 1 {
+			msg := "Cannot allow txn input index greater than 1"
+			log.Println(msg)
+			return nil, errors.New(msg)
+		}
+
+		otpt, err := c.GetUTxn(input.Hash, input.Index)
 		if err != nil {
 			return nil, err
 		}
 
-		if input.Index > 1 {
-			msg := "Cannot allow txn input index greater than 1"
+		if otpt == nil {
+			msg := "Output not found"
 			log.Println(msg)
-			panic(msg)
+			return nil, errors.New(msg)
 		}
 
-		utxns = append(utxns, txn.Body.Outputs[input.Index])
+		utxns = append(utxns, *otpt)
 	}
 
 	return utxns, nil
-}
-
-func (bc *Blockchain) LookupTxn(hash SHA256Sum) (Txn, error) {
-	utxnDB, err := db.OpenFile(bc.UTxnDBPath, nil)
-	if err != nil {
-		log.Println(err)
-		panic("Unable to open utxn database")
-	}
-	defer utxnDB.Close()
-
-	txnBytes, err := utxnDB.Get(hash[:], nil)
-	if err != nil {
-		return Txn{}, err
-	}
-
-	var txn Txn
-	err = json.Unmarshal(txnBytes, &txn)
-	if err != nil {
-		return Txn{}, err
-	}
-
-	return txn, nil
-}
-
-func (bc *Blockchain) LookupBlock(hash SHA256Sum) (Block, error) {
-	blockDB, err := db.OpenFile(bc.BlockDBPath, nil)
-	if err != nil {
-		log.Println(err)
-		panic("Unable to open block database")
-	}
-	defer blockDB.Close()
-
-	blockBytes, err := blockDB.Get(hash[:], nil)
-	if err != nil {
-		return Block{}, err
-	}
-
-	var block Block
-	err = json.Unmarshal(blockBytes, &block)
-	if err != nil {
-		return Block{}, err
-	}
-
-	return block, nil
-}
-
-func (bc *Blockchain) LookupPreimage(hash SHA256Sum) (bool, error) {
-	pimgDB, err := db.OpenFile(bc.PImgDBPath, nil)
-	if err != nil {
-		log.Println(err)
-		panic("Unable to open preimage database")
-	}
-	defer pimgDB.Close()
-
-	preimageBytes, err := pimgDB.Get(hash[:], nil)
-	if err != nil {
-		return false, err
-	}
-
-	if len(preimageBytes) != SHA256_SUM_LENGTH {
-		return false, nil
-	}
-
-	for i := 0; i < SHA256_SUM_LENGTH; i++ {
-		if hash[i] != preimageBytes[i] {
-			return false, nil
-		}
-	}
-
-	return true, nil
 }
