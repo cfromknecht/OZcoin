@@ -3,9 +3,10 @@ Capacity: max_strings=35307, hash_size=35307, hash_prime=30011
 The top-level auxiliary file: zerosum.aux
 The style file: abbrvnat.bst
 Database file #1: bibliography.bib
+Warning--I didn't find a database entry for "HOLYGRAIL"
 You've used 4 entries,
             2773 wiz_defined-function locations,
-            615 strings with 5043 characters,
+            617 strings with 5061 characters,
 and the built_in function-call counts, 1389 in all, are:
 = -- 118
 > -- 71
@@ -44,3 +45,4 @@ warning$ -- 0
 while$ -- 12
 width$ -- 0
 write$ -- 55
+(There was 1 warning)

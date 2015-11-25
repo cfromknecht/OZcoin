@@ -1,4 +1,4 @@
-package zebracoin
+package ozcoin
 
 import (
 	"math/big"

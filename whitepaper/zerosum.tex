@@ -52,13 +52,18 @@
 
 \newcommand{\setI}{\ensuremath{\mathcal{I}}}
 
+\newcommand{\alg}{\ensuremath{\mathcal{A}}}
+
 \newcommand{\hs}{\ensuremath{\mathcal{H}_S}}
 \newcommand{\hp}{\ensuremath{\mathcal{H}_P}}
 
+\newcommand{\qed}{\hfill\ensuremath{\square}}
+
+\newcommand{\curve}{\ensuremath{E(\mathbb{F}_q)}}
+
 \begin{document}
 
-\title{One-Time, Zero-Sum Ring Signature}
-
+\title{One-Time, Zero-Sum Ring Signature \\ {\small WORKING DRAFT}}
 \author{Conner Fromknecht}
 \date{\today}
 
@@ -180,7 +185,7 @@ This section describes the format of a transaction incorporating the above
 changes.  The construction of the OZRS is described in the subsequent section.
 \begin{align*} 
   & \text{\bf{INPUT}}       &&                                           \\%&& \\
-  & \text{Key Image: } && I = \sx \hp(\sx)                                \\%&& [33 \text{ bytes}] \\
+  %& \text{Key Image: } && I = \sx \hp(\sx)                                \\%&& [33 \text{ bytes}] \\
   & \text{Input Transaction Hashes: } && \{ \hs(T_i) \}_n                 \\%&& [32n \text{ bytes}] \\
   & \text{\bf{OUTPUT}}     &&                                            \\%&& \\
   & \text{Transaction Public Keys: } && \{ R_i = r_i G \}_m               \\%&& [33m \text{ bytes}] \\
@@ -189,7 +194,7 @@ changes.  The construction of the OZRS is described in the subsequent section.
   & \text{Commitments: } && \{ \oiC = \oiy G + \oiv H \}_m                \\%&& [33m \text{ bytes}] \\
   & \text{Range Proofs: } && \{ \pi_l(\oiC) \}_m                          \\%&& [(33l + 32(2l+1))m \text{ bytes}] \\
   & \text{\bf{SIGNATURE}} &&                                              \\%&& \\
-  & \text{OZRS: } && \Pi = (e, r_1, \dots, r_n, s_1, \dots, s_n)          \\%&& [32(2n+1) \text{ bytes}] 
+  & \text{OZRS: } && \Pi = (I, e, r_1, \dots, r_n, s_1, \dots, s_n)       \\%&& [32(2n+1) \text{ bytes}] 
 \end{align*} 
 
 \subsection{One-Time, Zero-Sum Ring Signature}
@@ -242,27 +247,27 @@ The One-Time, Zero-Sum Ring Signature scheme consists of the four operations
       D_i &= {\oC} - {\iC} = ({\oy} - {\iy}) G.
     \end{align}
     Next, we build the non-interactive challenge $e$.  Choose $k_1, k_2
-    \leftarrow Z_N^2$ at random.  Starting at index $*$, compute
-    \[ e_*^{(1)} = \hs(M ~ || ~ k_1 G ~ || ~ k_2 G ~ || ~ k_2 \hp(\spk) )\]
+    \leftarrow Z_N^2$ at random.  Starting at index $*+1$, compute \[
+    e_{*+1}^{(1)} = \hs(M ~ || ~ k_1 G ~ || ~ k_2 G ~ || ~ k_2 \hp(\spk) )\]
     Continue computing successive $e_i^{(\cdot)}$, wrapping around after $i=n$,
-    until $e_{*-1}^{(2)}$ using the following steps 
+    until $e_{*}^{(2)}$ using the following steps 
     \begin{align} 
       r_i, s_i &\leftarrow Z_N^2 \\
       e_i^{(2)} &= \hs(e_i^{(1)}) \\
       e_{i+1}^{(1)} &= \hs(M ~ || ~ r_iG - e_i^{(1)}D_i ~ || ~ s_iG - e_i^{(2)}{\ipk} ~ || ~ s_i \hp({\ipk}) - e_i^{(2)}I)
     \end{align}
-    Lastly, we set $r_{*-1}, s_{*-1}$ so that the hash hits $e_*^{(1)}$
+    Lastly, we set $r_*, s_*$ so that the hash hits $e_{*+1}^{(1)}$
     by
     \begin{align*}
-      r_{*-1} &= k_1 + e_{*-1}^{(1)}({\oy} - {\sy}) \\
-      s_{*-1} &= k_2 + e_{*-1}^{(2)}{\sx}
+      r_* &= k_1 + e_*^{(1)}({\oy} - {\sy}) \\
+      s_* &= k_2 + e_*^{(2)}{\sx}
     \end{align*}
     Assign $e=e_1^{(1)}$ and output the final proof 
-    $\Pi = (e, r_1, \dots, r_n, s_1, \dots, s_n)$.
+    $\Pi = (I, e, r_1, \dots, r_n, s_1, \dots, s_n)$.
 
 \ \\
 
-  \item ${\verify}(\Pi, M, C, {\oC}, X, I) \rightarrow \{0,1\} $
+  \item ${\verify}(\Pi, M, C, {\oC}, X) \rightarrow \{0,1\} $
 
     First compute each commit difference $D_i$ using equation (2).  Starting
     with $e=e_1^{(1)}$, compute the forward $e_i^{(\cdot)}$ for $i \in [1, n]$
@@ -310,22 +315,93 @@ The security properties are:
   \item {\bf Divisibility:} Given the set of input commitments $C=\{\iC\}_n$
   each committing to the value $a_i$ and the sum of the output commitments {\oC}
   committing to $a^\prime$, it is impossible to create a signature $\Pi$ such
-  that $a^\prime \neq a_*$.
+  that $a^\prime \neq a_*$.  This implies that each transaction perfectly
+  divides (or is equivalent to) the value of signer's input commitment.
 
 \end{itemize}
 
 \subsection{Linkability}
 
-{\bf Theorem 1:} OZRS is linkable under the random oracle model.
+{\bf Theorem 1:} OZRS is linkable under the random oracle model. \\
+
+{\it Proof.} For contradiction, assume that an adversary can produce $n+1$ valid
+signatures $\{\Pi_i\}_{n+1}$ such that $I_i \neq I_j$ for any $i,j \in
+[1,\dots,n+1]$.  Since $|X| = n$, there must be at least one $I^\prime \neq \ix
+\hp( \ipk )$ for any $i \in [1,\dots,n]$. Consider the corresponding signature
+$\Pi^\prime = (I^\prime, e, r_1, \dots, r_n, s_1, \dots, s_n)$.  Since all $n+1$
+signatures are valid, $\verify(\Pi^\prime)=1$, implying
+\begin{align*}
+  U_i^\prime &= r_i G - e_i^{(1)} D_i \\
+  V_i^\prime &= s_i G - e_i^{(2)} \ipk \\
+  W_i^\prime &= s_i \hp(\ipk) - e_i^{(2)} I^\prime \\
+  e_{i+1}^{(1)} &= \hs( M ~ || ~ U_i^\prime ~ || ~ V_i^\prime ~ || ~ W_i^\prime).
+\end{align*}
+The second and third equalities imply
+\begin{align*}
+  \log_G V_i^\prime &= s_i - e_i^{(2)} \ix \\
+  \log_{\hp(\ipk)} W_i^\prime &= s_i - e_i^{(2)} \log_{\hp(\ipk)} I^\prime.
+\end{align*}
+Let $x^\prime = \log_{\hp(\ipk)} I^\prime$, known to the signer.  Assume WLOG
+that the signature is computed using $*$ as the signing index.  To begin the
+forward computation, the signer has committed to some $k_2^\prime$ and
+$k_2^{\prime\prime}$ in
+\begin{align*}
+  V_* &= k_2^\prime G \\
+  W_* &= k_2^{\prime\prime} \hp(\spk).
+\end{align*}
+Since the signature verifies, it must be that $V_* = V_*^\prime$ and $W_* =
+W_*^\prime$, implying
+\begin{align*}
+  k_2^\prime &= s_* - e_*^{(2)} \sx \\
+  k_2^{\prime\prime} &= s_* - e_*^{(2)} x^\prime.
+\end{align*}
+Combining the above equations provides the following relation
+\[
+  k_2^{\prime\prime} = k_2^\prime + e_*^{(2)}(\sx - x^\prime).
+\]
+Since $\nexists i : x_i = x^\prime$, the signer also knows $e_*^{(2)}$ before
+beginning the forward computation.  This yields a contradiction, since this
+requires finding a preimage of {\hs}, which succeeds with only negligible
+probability.  Therefore, OZRS is linkable under the random oracle model. \qed
 
 \subsection{Exculpability}
 
 {\bf Theorem 2:} OZRS is exculpable under the discrete logarithm assumption in
-the random oracle model.
+the random oracle model. \\
+
+{\it Proof.} For contradiction, assume that an adversary can produce a valid
+signature $\Pi=(I, e, r_1, \dots, r_n, s_1, \dots, s_n)$ with $I = \sx
+\hp(\spk)$ given $\{\ix\}$ for $i \in [1,\dots,n] \setminus \{*\}$.  Then, we
+can construct an algorithm {\alg} which solves the discrete logarithm in
+{\curve}.
+
+Suppose $(G, P) \in \curve^2$ is a given instance of the DLP where the goal is
+recover $s$ such that $G = sP$.  Using the techniques in \cite{HOLYGRAIL},
+{\alg} simulates the random and signing oracles and makes the adversary produce
+two valid signatures with $P = \spk \in X$: 
+\[
+\Pi = (I,e,r_1,\dots,r_n,s_1,\dots,s_n) 
+\text{~and~} 
+\Pi^\prime = (I,e^\prime,r_1^\prime,\dots,r_n^\prime,s_1^\prime,\dots,s_n^\prime).
+\]
+
+Since $I = \sx \hp(\spk)$ in both signatures, {\alg} computes $\sx =
+\log_{\hp(\spk)} I = \frac{s_* - s_*^\prime}{e_*^{(2)} - e_*^{(2)\prime}} \mod
+N$. {\alg} outputs $\sx$ since $V_* = s_* G + e_*^{(2)} \spk = s_*^\prime G +
+e_*^{(2)\prime} \spk$ and $\spk = P$.
 
 \subsection{Unforgeability}
 
-{\bf Theorem 3:} If OZRS is linkable and exculpable, then it is unforgeable.
+{\bf Theorem 3:} If OZRS is linkable and exculpable, then it is unforgeable. \\
+
+{\it Proof.}  For contradiction, assume that an adversary can forge a signature
+for given set of public keys $X$: $\Pi_0 = (I_0,\dots)$.  Consider all valid
+signatures (produced by honest signers) for the same message $M$ and $X$:
+$\Pi_1, \Pi_2, \dots, \Pi_n$.  There are two possible cases:
+\begin{enumerate}
+  \item $I_0 \in \{I_i\}_{i=1}^n$.  Which contradicts exculpability.
+  \item $I_0 \notin \{I_i\}_{i=1}^n$.  Which contradicts linkability.
+\end{enumerate}
 
 \subsection{Anonymity}
 

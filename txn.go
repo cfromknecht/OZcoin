@@ -1,14 +1,30 @@
-package zebracoin
+package ozcoin
 
 import (
+	"encoding/json"
+	"log"
 	"math/big"
 )
 
+const (
+	TXN_NUM_INPUTS  = 8
+	TXN_NUM_OUTPUTS = 2
+)
+
 type Txn struct {
-	Preimage ECCPoint
-	Inputs   []string
-	Outputs  []Output
-	Sig      OZRS
+	Body TxnBody
+	Sig  OZRS
+}
+
+type TxnBody struct {
+	Inputs  []Input
+	Outputs []Output
+	Fee     uint64
+}
+
+type Input struct {
+	Hash  SHA256Sum
+	Index uint8
 }
 
 type Output struct {
@@ -18,51 +34,33 @@ type Output struct {
 	Commit    Commitment
 }
 
-func NewTxn(inputs []string,
-	sk *big.Int,
-	yi *big.Int,
+func (bc *Blockchain) NewTxn(inputs []Input,
+	sk, yi *big.Int,
 	idx int,
 	amts []uint64,
-	rcpts []WalletPublicKey) *Txn {
+	rcpts []WalletPublicKey,
+	fee uint64) *Txn {
 
-	if amts == nil || rcpts == nil {
+	if inputs == nil || amts == nil || rcpts == nil {
 		return nil
 	}
 
-	if idx < 0 || idx >= len(inputs) {
+	if idx < 0 || idx >= TXN_NUM_INPUTS {
 		return nil
 	}
 
-	if len(amts) != len(rcpts) {
-		return nil
+	utxns, err := bc.fetchInputTxns(inputs)
+	if err != nil {
+		log.Println(err)
+		panic(err)
 	}
 
-	// fetch pks and check public keys
-	pks := []ECCPoint{}
-	ics := []ECCPoint{}
-	for i, _ := range inputs {
-		// lookup prevhash from db to get pks and commitments
-
-		// for now...
-		// create pks
-		x := RandomInt()
-		if i == idx {
-			x = sk
-		}
-		pkx, pky := CURVE.Params().ScalarBaseMult(x.Bytes())
-		pks = append(pks, ECCPoint{pkx, pky})
-
-		// create commitments
-		y := RandomInt()
-		if i == idx {
-			y = yi
-		}
-		amtBytes := UIntBytes(amts[i])
-		C := PedersenSum(y.Bytes(), amtBytes)
-		ics = append(ics, C)
+	// gather public keys and commitments
+	pks, ics := []ECCPoint{}, []Commitment{}
+	for _, utxn := range utxns {
+		pks = append(pks, utxn.PublicKey)
+		ics = append(ics, utxn.Commit)
 	}
-	spk := pks[idx]
-	pimg := Preimage(spk, sk)
 
 	outputs := []Output{}
 	sumYOut := &big.Int{}
@@ -105,30 +103,40 @@ func NewTxn(inputs []string,
 	}
 
 	txn := &Txn{
-		Preimage: pimg,
-		Inputs:   inputs,
-		Outputs:  outputs,
-		Sig:      OZRS{},
+		Body: TxnBody{
+			Inputs:  inputs,
+			Outputs: outputs,
+			Fee:     fee,
+		},
+		Sig: OZRS{},
 	}
 	txn.OZRSSign(pks, ics, sk, yi, idx, sumYOut)
 
 	return txn
 }
 
-func (txn Txn) MsgBytes() []byte {
-	m := []byte{}
-	m = append(m, txn.Preimage.Bytes()...)
-	for _, pk := range txn.Inputs {
-		m = append(m, []byte(pk)...)
-	}
-	for _, otpt := range txn.Outputs {
-		m = append(m, otpt.PublicKey.Bytes()...)
-		m = append(m, otpt.DestKey.Bytes()...)
-		m = append(m, otpt.BlindSeed.Bytes()...)
-		m = append(m, otpt.Commit.Bytes()...)
+func (txn Txn) BodyJson() []byte {
+	b, err := json.Marshal(txn.Body)
+	if err != nil {
+		log.Println(err)
+		panic("Could not marshal txn body")
 	}
 
-	return m
+	return b
+}
+
+func (txn Txn) Json() []byte {
+	b, err := json.Marshal(txn)
+	if err != nil {
+		log.Println(err)
+		panic("Could not marshal txn")
+	}
+
+	return b
+}
+
+func (txn Txn) Hash() SHA256Sum {
+	return Hash(txn.Json())
 }
 
 func Preimage(pk ECCPoint, sk *big.Int) ECCPoint {

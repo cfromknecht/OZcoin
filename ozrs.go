@@ -1,72 +1,68 @@
-package zebracoin
+package ozcoin
 
 import (
 	"math/big"
 )
 
 type OZRS struct {
-	E  SHA256Sum
-	Rs []*big.Int
-	Ss []*big.Int
+	Preimage ECCPoint
+	E        SHA256Sum
+	Rs       [TXN_NUM_INPUTS]*big.Int
+	Ss       [TXN_NUM_INPUTS]*big.Int
 }
 
-func (txn Txn) OZRSSign(pks, ics []ECCPoint,
+func (txn Txn) OZRSSign(pks []ECCPoint,
+	ics []Commitment,
 	sk, yi *big.Int,
 	idx int,
 	yOut *big.Int) {
 
-	M := txn.MsgBytes()
+	M := txn.BodyJson()
 	hashM := Hash(M)
 
-	// Sum output commitments and take negative
-	ocx, ocy := &big.Int{}, &big.Int{}
-	for _, otpt := range txn.Outputs {
-		ocx, ocy = CURVE.Params().Add(ocx, ocy, otpt.Commit.X, otpt.Commit.Y)
-	}
-	ocy.Neg(ocy)
+	// Calculate signing key preimage
+	pimg := Preimage(pks[idx], sk)
 
 	// Calculate commit differences
-	diffs := []ECCPoint{}
-	for _, c := range ics {
-		dix, diy := CURVE.Params().Add(c.X, c.Y, ocx, ocy)
-		diffs = append(diffs, ECCPoint{dix, diy})
-	}
+	diffs := txn.commitDifferences(ics)
 
-	es := make([]SHA256Sum, len(txn.Inputs))
-	rs := make([]*big.Int, len(txn.Inputs))
-	ss := make([]*big.Int, len(txn.Inputs))
+	es := [TXN_NUM_INPUTS]SHA256Sum{}
+	rs := [TXN_NUM_INPUTS]*big.Int{}
+	ss := [TXN_NUM_INPUTS]*big.Int{}
 
 	k1, k2 := RandomInt(), RandomInt()
 	k1Gx, k1Gy := CURVE.ScalarBaseMult(k1.Bytes())
 	k2Gx, k2Gy := CURVE.ScalarBaseMult(k2.Bytes())
 	k2HP := Preimage(pks[idx], k2)
 
-	// H( M | k1 G | k2 G | k2 H_P(X_i) )
+	// e[idx+1] = H( M | k1 G | k2 G | k2 H_P(X_i) )
 	eidxData := []byte{}
 	eidxData = append(eidxData, hashM[:]...)
 	eidxData = append(eidxData, ECCPoint{k1Gx, k1Gy}.Bytes()...)
 	eidxData = append(eidxData, ECCPoint{k2Gx, k2Gy}.Bytes()...)
 	eidxData = append(eidxData, k2HP.Bytes()...)
-	es[idx] = Hash(eidxData)
 
-	for i := idx; i < idx-1; i = (i + 1) % len(pks) {
-		next := (i + 1) % len(pks)
+	next := (idx + 1) % TXN_NUM_INPUTS
+	es[next] = Hash(eidxData)
+
+	for i := next; i != idx; i = (i + 1) % TXN_NUM_INPUTS {
 		rs[i], ss[i] = RandomInt(), RandomInt()
-		es[next] = computeE3(hashM, rs[i], ss[i], es[i], diffs[i], pks[i], txn.Preimage)
+		next = (i + 1) % TXN_NUM_INPUTS
+		es[next] = computeE3(hashM, rs[i], ss[i], es[i], diffs[i], pks[i], pimg)
 	}
 
 	// Complete ring
-	prev := (idx - 1) % len(pks)
-	e1 := es[prev]
+	e1 := es[idx]
 	e2 := Hash(e1[:])
 
 	z := &big.Int{}
 	z.Sub(yi, yOut)
 
-	rs[prev] = timeTravel(z, k1, e1)
-	ss[prev] = timeTravel(sk, k2, e2)
+	rs[idx] = timeTravel(z, k1, e1)
+	ss[idx] = timeTravel(sk, k2, e2)
 
 	// Fill in signature
+	txn.Sig.Preimage = pimg
 	txn.Sig.E = es[0]
 	txn.Sig.Rs = rs
 	txn.Sig.Ss = ss
@@ -106,4 +102,23 @@ func PedersenDiffPK2(blind, amt []byte, base, pk ECCPoint) ECCPoint {
 	x, y := CURVE.Params().Add(xGx, xGy, ePx, ePy)
 
 	return ECCPoint{x, y}
+}
+
+func (txn Txn) commitDifferences(ics []Commitment) []ECCPoint {
+	// Sum output commitments and take negative
+	ocx, ocy := &big.Int{}, &big.Int{}
+	for _, otpt := range txn.Body.Outputs {
+		ocx, ocy = CURVE.Params().Add(ocx, ocy, otpt.Commit.X, otpt.Commit.Y)
+	}
+	ocy.Neg(ocy)
+	oc := ECCPoint{ocx, ocy}
+
+	// Subtract total output commitment from each input commitment
+	diffs := []ECCPoint{}
+	for i, c := range ics {
+		dix, diy := CURVE.Params().Add(c.X, c.Y, oc.X, oc.Y)
+		diffs[i] = ECCPoint{dix, diy}
+	}
+
+	return diffs
 }
