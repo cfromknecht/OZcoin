@@ -34,7 +34,7 @@ type Output struct {
 	Commit    Commitment
 }
 
-func (bc *Blockchain) NewTxn(inputs []Input,
+func (c *Client) NewTxn(inputs []Input,
 	sk, yi *big.Int,
 	idx int,
 	amts []uint64,
@@ -49,7 +49,7 @@ func (bc *Blockchain) NewTxn(inputs []Input,
 		return nil
 	}
 
-	utxns, err := bc.fetchInputTxns(inputs)
+	utxns, err := c.fetchInputTxns(inputs)
 	if err != nil {
 		log.Println(err)
 		panic(err)

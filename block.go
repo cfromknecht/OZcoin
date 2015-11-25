@@ -25,9 +25,8 @@ type BlockHeader struct {
 }
 
 type Block struct {
-	Header      BlockHeader `json:"header"`
-	CoinbaseTxn Txn         `json:"coinbase_txn"`
-	Txns        []Txn       `json:"txns"`
+	Header BlockHeader `json:"header"`
+	Txns   []Txn       `json:"txns"`
 }
 
 func (b Block) Json() []byte {
@@ -50,8 +49,7 @@ func NewBlock(prev BlockHeader, minerAddress SHA256Sum) Block {
 			Difficulty: CURRENT_DIFFICULTY,
 			Nonce:      0,
 		},
-		CoinbaseTxn: Txn{},
-		Txns:        []Txn{},
+		Txns: []Txn{},
 	}
 }
 
@@ -65,8 +63,7 @@ func GenesisBlock() Block {
 			Difficulty: CURRENT_DIFFICULTY,
 			Nonce:      0,
 		},
-		CoinbaseTxn: Txn{},
-		Txns:        []Txn{},
+		Txns: []Txn{},
 	}
 }
 
