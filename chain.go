@@ -154,7 +154,7 @@ func (bc *Blockchain) ValidTxn(txn Txn) bool {
 		ics = append(ics, utxn.Commit)
 	}
 
-	return true //txn.ValidOZRS(pks, ics)
+	return txn.VerifyOZRS(pks, ics)
 }
 
 func (bc *Blockchain) ValidGenerationTxn(txn Txn) bool {
@@ -236,4 +236,30 @@ func (bc *Blockchain) LookupBlock(hash SHA256Sum) (Block, error) {
 	}
 
 	return block, nil
+}
+
+func (bc *Blockchain) LookupPreimage(hash SHA256Sum) (bool, error) {
+	pimgDB, err := db.OpenFile(bc.PImgDBPath, nil)
+	if err != nil {
+		log.Println(err)
+		panic("Unable to open preimage database")
+	}
+	defer pimgDB.Close()
+
+	preimageBytes, err := pimgDB.Get(hash[:], nil)
+	if err != nil {
+		return false, err
+	}
+
+	if len(preimageBytes) != SHA256_SUM_LENGTH {
+		return false, nil
+	}
+
+	for i := 0; i < SHA256_SUM_LENGTH; i++ {
+		if hash[i] != preimageBytes[i] {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
