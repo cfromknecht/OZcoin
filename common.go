@@ -2,7 +2,6 @@ package ozcoin
 
 import (
 	"crypto/rand"
-	"encoding/binary"
 	"log"
 	"math/big"
 )
@@ -10,7 +9,8 @@ import (
 const (
 	MAX_BLOCK_SIZE     = 2 * 1024 * 1024 * 1024 // 2 MB
 	TWO_WEEKS_SEC      = 14 * 24 * 60 * 60      // 2 weeks in seconds
-	INITIAL_DIFFICULTY = 1 << 20
+	INITIAL_DIFFICULTY = 16
+	DIFFICULTY_SPACING = 2016
 )
 
 func RandomBytes() SHA256Sum {
@@ -34,8 +34,8 @@ func RandomInt() *big.Int {
 }
 
 func UIntBytes(x uint64) []byte {
-	b := [8]byte{}
-	binary.PutUvarint(b[:], x)
+	i := &big.Int{}
+	i.SetUint64(x)
 
-	return b[:]
+	return i.Bytes()
 }

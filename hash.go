@@ -13,6 +13,17 @@ func Hash(data []byte) SHA256Sum {
 	return sha256.Sum256(data)
 }
 
+func (h SHA256Sum) Bytes() []byte {
+	return h[:]
+}
+
+func (h SHA256Sum) Int() *big.Int {
+	i := &big.Int{}
+	i.SetBytes(h.Bytes())
+
+	return i
+}
+
 func HashToPt(data []byte) ECCPoint {
 	h := Hash(data)
 	x, y := CURVE.Params().ScalarBaseMult(h[:])

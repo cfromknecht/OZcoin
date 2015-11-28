@@ -4,15 +4,49 @@ import (
 	db "github.com/syndtr/goleveldb/leveldb"
 
 	"encoding/json"
+	"errors"
 	"log"
 )
+
+type DBManager struct {
+	headerDB       *db.DB
+	sideHeaderDB   *db.DB
+	orphanHeaderDB *db.DB
+	blockDB        *db.DB
+	sideBlockDB    *db.DB
+	orphanBlockDB  *db.DB
+	mapDB          *db.DB
+	pimgDB         *db.DB
+	peerDB         *db.DB
+	txnPoolDB      *db.DB
+}
+
+func (c *Client) OpenDatabases() *DBManager {
+	dbm := &DBManager{}
+	dbm.OpenConnections(c)
+
+	return dbm
+}
+
+func (dbm *DBManager) OpenConnections(c *Client) {
+	dbm.headerDB = c.OpenHeaderDB()
+	dbm.sideHeaderDB = c.OpenSideHeaderDB()
+	dbm.orphanHeaderDB = c.OpenOrphanHeaderDB()
+	dbm.blockDB = c.OpenBlockDB()
+	dbm.sideBlockDB = c.OpenSideBlockDB()
+	dbm.orphanBlockDB = c.OpenOrphanBlockDB()
+	dbm.mapDB = c.OpenMapDB()
+	dbm.pimgDB = c.OpenPreimageDB()
+	dbm.peerDB = c.OpenPeerDB()
+	dbm.txnPoolDB = c.OpenTxnPoolDB()
+}
 
 /*
  * Main Header Database
  */
 
-func (s *Client) OpenHeaderDB() *db.DB {
-	headerDB, err := db.OpenFile(s.HeaderDBPath, nil)
+func (c *Client) OpenHeaderDB() *db.DB {
+	headerDB, err := db.OpenFile(c.HeaderDBPath, nil)
 	if err != nil {
 		log.Println(err)
 		panic("Unable to open header database")
@@ -21,11 +55,8 @@ func (s *Client) OpenHeaderDB() *db.DB {
 	return headerDB
 }
 
-func (s *Client) GetHeader(hash SHA256Sum) (*BlockHeader, error) {
-	headerDB := s.OpenHeaderDB()
-	defer headerDB.Close()
-
-	headerBytes, err := headerDB.Get(hash[:], nil)
+func (c *Client) GetHeader(hash SHA256Sum) (*BlockHeader, error) {
+	headerBytes, err := c.dbm.headerDB.Get(hash[:], nil)
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +65,7 @@ func (s *Client) GetHeader(hash SHA256Sum) (*BlockHeader, error) {
 		return nil, nil
 	}
 
-	var header *BlockHeader
+	header := &BlockHeader{}
 	err = json.Unmarshal(headerBytes, header)
 	if err != nil {
 		return nil, err
@@ -44,24 +75,19 @@ func (s *Client) GetHeader(hash SHA256Sum) (*BlockHeader, error) {
 }
 
 func (c *Client) ExtendHeader(header BlockHeader) error {
-	headerDB := c.OpenHeaderDB()
-	defer headerDB.Close()
-
 	hash := header.Hash()
 
 	batch := &db.Batch{}
 	batch.Put(hash[:], header.Json())
 	batch.Delete(header.PrevHash[:])
 
-	return headerDB.Write(batch, nil)
+	return c.dbm.headerDB.Write(batch, nil)
 }
 
 func (c *Client) PutHeader(header BlockHeader) error {
-	headerDB := c.OpenHeaderDB()
-	defer headerDB.Close()
-
 	hash := header.Hash()
-	return headerDB.Put(hash[:], header.Json(), nil)
+	log.Println("Putting header")
+	return c.dbm.headerDB.Put(hash[:], header.Json(), nil)
 }
 
 /*
@@ -78,11 +104,8 @@ func (s *Client) OpenSideHeaderDB() *db.DB {
 	return sideDB
 }
 
-func (s *Client) GetSideHeader(hash SHA256Sum) (*BlockHeader, error) {
-	sideDB := s.OpenSideHeaderDB()
-	defer sideDB.Close()
-
-	headerBytes, err := sideDB.Get(hash[:], nil)
+func (c *Client) GetSideHeader(hash SHA256Sum) (*BlockHeader, error) {
+	headerBytes, err := c.dbm.sideHeaderDB.Get(hash[:], nil)
 	if err != nil {
 		return nil, err
 	}
@@ -102,24 +125,8 @@ func (s *Client) GetSideHeader(hash SHA256Sum) (*BlockHeader, error) {
 }
 
 func (c *Client) PutSideHeader(header BlockHeader) error {
-	sideDB := c.OpenSideHeaderDB()
-	defer sideDB.Close()
-
 	hash := header.Hash()
-	return sideDB.Put(hash[:], header.Json(), nil)
-}
-
-func (c *Client) ExtendSideHeader(header BlockHeader) error {
-	sideDB := c.OpenSideHeaderDB()
-	defer sideDB.Close()
-
-	hash := header.Hash()
-
-	batch := &db.Batch{}
-	batch.Put(hash[:], header.Json())
-	batch.Delete(header.PrevHash[:])
-
-	return sideDB.Write(batch, nil)
+	return c.dbm.sideHeaderDB.Put(hash[:], header.Json(), nil)
 }
 
 /*
@@ -136,11 +143,8 @@ func (s *Client) OpenOrphanHeaderDB() *db.DB {
 	return orphanDB
 }
 
-func (s *Client) GetOrphanHeader(hash SHA256Sum) (*BlockHeader, error) {
-	orphanDB := s.OpenOrphanHeaderDB()
-	defer orphanDB.Close()
-
-	headerBytes, err := orphanDB.Get(hash[:], nil)
+func (c *Client) GetOrphanHeader(hash SHA256Sum) (*BlockHeader, error) {
+	headerBytes, err := c.dbm.orphanHeaderDB.Get(hash[:], nil)
 	if err != nil {
 		return nil, err
 	}
@@ -160,11 +164,8 @@ func (s *Client) GetOrphanHeader(hash SHA256Sum) (*BlockHeader, error) {
 }
 
 func (c *Client) PutOrphanHeader(header BlockHeader) error {
-	orphanDB := c.OpenOrphanHeaderDB()
-	defer orphanDB.Close()
-
 	hash := header.Hash()
-	return orphanDB.Put(hash[:], header.Json(), nil)
+	return c.dbm.orphanHeaderDB.Put(hash[:], header.Json(), nil)
 }
 
 /*
@@ -182,29 +183,23 @@ func (s *Client) OpenBlockDB() *db.DB {
 }
 
 func (c *Client) GetBlock(hash SHA256Sum) (*Block, error) {
-	blockDB := c.OpenBlockDB()
-	defer blockDB.Close()
-
-	blockBytes, err := blockDB.Get(hash[:], nil)
+	blockBytes, err := c.dbm.blockDB.Get(hash[:], nil)
 	if err != nil {
 		return &Block{}, err
 	}
 
-	var block *Block
+	block := &Block{}
 	err = json.Unmarshal(blockBytes, block)
 	if err != nil {
-		return &Block{}, err
+		return block, err
 	}
 
 	return block, nil
 }
 
 func (c *Client) PutBlock(block Block) error {
-	blockDB := c.OpenBlockDB()
-	defer blockDB.Close()
-
 	hash := block.Header.Hash()
-	return blockDB.Put(hash[:], block.Json(), nil)
+	return c.dbm.blockDB.Put(hash[:], block.Json(), nil)
 }
 
 /*
@@ -222,10 +217,7 @@ func (s *Client) OpenSideBlockDB() *db.DB {
 }
 
 func (c *Client) GetSideBlock(hash SHA256Sum) (*Block, error) {
-	sblockDB := c.OpenSideBlockDB()
-	defer sblockDB.Close()
-
-	sblockBytes, err := sblockDB.Get(hash[:], nil)
+	sblockBytes, err := c.dbm.sideBlockDB.Get(hash[:], nil)
 	if err != nil {
 		return &Block{}, err
 	}
@@ -240,11 +232,8 @@ func (c *Client) GetSideBlock(hash SHA256Sum) (*Block, error) {
 }
 
 func (c *Client) PutSideBlock(block Block) error {
-	sblockDB := c.OpenSideBlockDB()
-	defer sblockDB.Close()
-
 	hash := block.Header.Hash()
-	return sblockDB.Put(hash[:], block.Json(), nil)
+	return c.dbm.sideBlockDB.Put(hash[:], block.Json(), nil)
 }
 
 /*
@@ -262,10 +251,7 @@ func (s *Client) OpenOrphanBlockDB() *db.DB {
 }
 
 func (c *Client) GetOrphanBlock(hash SHA256Sum) (*Block, error) {
-	oblockDB := c.OpenOrphanBlockDB()
-	defer oblockDB.Close()
-
-	oblockBytes, err := oblockDB.Get(hash[:], nil)
+	oblockBytes, err := c.dbm.orphanBlockDB.Get(hash[:], nil)
 	if err != nil {
 		return &Block{}, err
 	}
@@ -280,19 +266,16 @@ func (c *Client) GetOrphanBlock(hash SHA256Sum) (*Block, error) {
 }
 
 func (c *Client) PutOrphanBlock(block Block) error {
-	oblockDB := c.OpenOrphanBlockDB()
-	defer oblockDB.Close()
-
 	hash := block.Header.Hash()
-	return oblockDB.Put(hash[:], block.Json(), nil)
+	return c.dbm.orphanBlockDB.Put(hash[:], block.Json(), nil)
 }
 
 /*
  * Preimage Database
  */
 
-func (s *Client) OpenPreimageDB() *db.DB {
-	pimgDB, err := db.OpenFile(s.PImgDBPath, nil)
+func (c *Client) OpenPreimageDB() *db.DB {
+	pimgDB, err := db.OpenFile(c.PImgDBPath, nil)
 	if err != nil {
 		log.Println(err)
 		panic("Unable to open preimage database")
@@ -301,69 +284,96 @@ func (s *Client) OpenPreimageDB() *db.DB {
 	return pimgDB
 }
 
-func (s *Client) GetPreimage(hash SHA256Sum) (bool, error) {
-	pimgDB := s.OpenPreimageDB()
-	defer pimgDB.Close()
-
-	preimageBytes, err := pimgDB.Get(hash[:], nil)
+func (c *Client) GetPreimage(hash SHA256Sum) bool {
+	preimageBytes, err := c.dbm.pimgDB.Get(hash[:], nil)
 	if err != nil {
-		return false, err
+		return false
 	}
 
 	if len(preimageBytes) != SHA256_SUM_LENGTH {
-		return false, nil
+		return false
 	}
 
 	for i := 0; i < SHA256_SUM_LENGTH; i++ {
 		if hash[i] != preimageBytes[i] {
-			return false, nil
+			return false
 		}
 	}
 
-	return true, nil
+	return true
 }
 
 func (c *Client) PutPreimage(hash SHA256Sum) error {
-	pimgDB := c.OpenPreimageDB()
-	defer pimgDB.Close()
-
-	return pimgDB.Put(hash[:], hash[:], nil)
-}
-
-func (s *Client) OpenUTxnDB() *db.DB {
-	utxnDB, err := db.OpenFile(s.UTxnDBPath, nil)
-	if err != nil {
-		log.Println(err)
-		panic("Unable to open unspent txn database")
-	}
-
-	return utxnDB
+	return c.dbm.pimgDB.Put(hash[:], hash[:], nil)
 }
 
 /*
- * Unspent Transaction Database
+ * Txn and Output to Block Map Database
  */
 
-func (c *Client) GetUTxn(hash SHA256Sum, index uint8) (*Output, error) {
-	utxnDB := c.OpenUTxnDB()
-	defer utxnDB.Close()
-
-	utxnBytes, err := utxnDB.Get(hash[:], nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var txn *Txn
-	err = json.Unmarshal(utxnBytes, txn)
+func (c *Client) OpenMapDB() *db.DB {
+	mDB, err := db.OpenFile(c.MapDBPath, nil)
 	if err != nil {
 		log.Println(err)
-		return nil, err
+		panic("Unable to open map database")
 	}
 
-	output := &Output{}
-	*output = txn.Body.Outputs[index]
+	return mDB
+}
 
-	return output, nil
+func (c *Client) MapToBlock(hash SHA256Sum) (SHA256Sum, error) {
+	hashBytes, err := c.dbm.mapDB.Get(hash.Bytes(), nil)
+	if err != nil {
+		return SHA256Sum{}, err
+	}
+
+	if len(hashBytes) != SHA256_SUM_LENGTH {
+		return SHA256Sum{}, errors.New("Invalid hash length")
+	}
+
+	s := SHA256Sum{}
+	for i, b := range hashBytes {
+		s[i] = b
+	}
+
+	return s, nil
+}
+
+func (c *Client) PutMapToBlock(block Block) error {
+	blockHash := block.Header.Hash()
+
+	log.Println("Making map batch")
+	batch := &db.Batch{}
+	for i, txn := range block.Txns {
+		if i != 0 {
+			log.Println("Adding preimage")
+			pimgHash := Hash(txn.Sig.Preimage.Bytes())
+			batch.Put(pimgHash.Bytes(), blockHash.Bytes())
+		}
+		for _, output := range txn.Body.Outputs {
+			log.Println("Adding output")
+			batch.Put(output.Hash().Bytes(), blockHash.Bytes())
+		}
+	}
+
+	log.Println("Writing batch")
+
+	return c.dbm.mapDB.Write(batch, nil)
+}
+
+func (c *Client) DeleteMapToBlock(block Block) error {
+	batch := &db.Batch{}
+	for i, txn := range block.Txns {
+		if i != 0 {
+			pimgHash := Hash(txn.Sig.Preimage.Bytes())
+			batch.Delete(pimgHash.Bytes())
+		}
+		for _, output := range txn.Body.Outputs {
+			batch.Delete(output.Hash().Bytes())
+		}
+	}
+
+	return c.dbm.mapDB.Write(batch, nil)
 }
 
 /*
@@ -381,8 +391,74 @@ func (c *Client) OpenPeerDB() *db.DB {
 }
 
 func (c *Client) PutPeer(address string) error {
-	peerDB := c.OpenPeerDB()
-	defer peerDB.Close()
+	return c.dbm.peerDB.Put([]byte(address), []byte{}, nil)
+}
 
-	return peerDB.Put([]byte(address), []byte{}, nil)
+/*
+ * Txn Pool Database
+ */
+
+func (c *Client) OpenTxnPoolDB() *db.DB {
+	txnPoolDB, err := db.OpenFile(c.TxnPoolDBPath, nil)
+	if err != nil {
+		log.Println(err)
+		panic("Unable to open txn pool database")
+	}
+
+	return txnPoolDB
+}
+
+func (c *Client) GetTxnPool(hash SHA256Sum) (*Txn, error) {
+	txnBytes, err := c.dbm.txnPoolDB.Get(hash[:], nil)
+	if err != nil {
+		return nil, err
+	}
+
+	txn := &Txn{}
+	err = json.Unmarshal(txnBytes, txn)
+	if err != nil {
+		return nil, err
+	}
+
+	return txn, nil
+}
+
+func (c *Client) PutTxnPool(txn Txn) error {
+	hash := txn.Hash()
+	return c.dbm.txnPoolDB.Put(hash[:], txn.Json(), nil)
+}
+
+func (c *Client) DeleteTxnPool(txn Txn) error {
+	hash := txn.Hash()
+	return c.dbm.txnPoolDB.Delete(hash[:], nil)
+}
+
+func (c *Client) TxnsFromPool() []Txn {
+	txns := []Txn{}
+	iter := c.dbm.txnPoolDB.NewIterator(nil, nil)
+	for iter.Next() {
+		txnBytes := iter.Value()
+
+		txn := Txn{}
+		err := json.Unmarshal(txnBytes, &txn)
+		if err != nil {
+			log.Println("Could not marshal txn:", err)
+			continue
+		}
+
+		if !ValidTxn(txn) {
+			log.Println("INVALID TXN")
+			continue
+		}
+
+		if !c.VerifyTxn(txn, nil, nil, nil, nil) {
+			log.Println("TXN FAILED TO VERIFY")
+			continue
+		}
+
+		txns = append(txns, txn)
+	}
+	iter.Release()
+
+	return txns
 }

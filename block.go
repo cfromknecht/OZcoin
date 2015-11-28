@@ -3,16 +3,12 @@ package ozcoin
 import (
 	"encoding/json"
 	"log"
+	"math/big"
 	"time"
 )
 
 const (
 	HASH_GENESIS_BLOCK = "hwm5tjMI9ZsvG2VwNKeMtJq7PDLDvPM/hLFQ2VYdE88="
-)
-
-var (
-	CURRENT_DIFFICULTY   = uint64(16)
-	CURRENT_BLOCK_REWARD = uint64(50000000)
 )
 
 type BlockHeader struct {
@@ -39,32 +35,121 @@ func (b Block) Json() []byte {
 	return blockJson
 }
 
-func NewBlock(prev BlockHeader, minerAddress SHA256Sum) Block {
-	return Block{
+func (c *Client) NewBlock(prev BlockHeader, address WalletPublicKey) Block {
+	seqNum := prev.SeqNum + 1
+
+	// Gather txns and add fees
+	txns := c.TxnsFromPool()
+	fees := uint64(0)
+	for _, t := range txns {
+		fees += t.Body.Fee
+	}
+
+	// Create new coinbase commitment
+	coinbaseTxn := NewCoinbaseTxn(address, seqNum, fees)
+
+	block := Block{
 		Header: BlockHeader{
-			SeqNum:     prev.SeqNum + 1,
+			SeqNum:     seqNum,
 			PrevHash:   prev.Hash(),
 			MerkleRoot: SHA256Sum{},
 			Time:       time.Now(),
-			Difficulty: CURRENT_DIFFICULTY,
+			Difficulty: INITIAL_DIFFICULTY,
 			Nonce:      0,
 		},
-		Txns: []Txn{},
+		Txns: []Txn{
+			coinbaseTxn,
+		},
+	}
+
+	block.Txns = append(block.Txns, txns...)
+
+	block.Header.MerkleRoot = block.MerkleHash()
+	block.Header.Difficulty = c.ComputeDifficulty(block)
+
+	return block
+}
+
+func NewCoinbaseTxn(address WalletPublicKey, seqNum, fee uint64) Txn {
+	tpk := address.TPK
+	ppk := address.PPK
+
+	zero := &big.Int{}
+	coinbase := CoinbaseValue(seqNum) + fee
+	coinbaseBytes := UIntBytes(coinbase)
+	commit := PedersenSum(zero.Bytes(), coinbaseBytes)
+
+	// Public Key
+	r := RandomBytes()
+	rGx, rGy := CURVE.ScalarBaseMult(r.Bytes())
+
+	// Destination Key
+	secx, secy := CURVE.Params().ScalarMult(tpk.X, tpk.Y, r.Bytes())
+	h := Hash(ECCPoint{secx, secy}.Bytes())
+	dkx, dky := CURVE.Params().ScalarBaseMult(h.Bytes())
+	dkx, dky = CURVE.Params().Add(dkx, dky, ppk.X, ppk.Y)
+
+	ss := [RANGE_PROOF_LENGTH][2]*big.Int{}
+	for i, pair := range ss {
+		for j := range pair {
+			ss[i][j] = zero
+		}
+	}
+	rs := [TXN_NUM_INPUTS]*big.Int{}
+	for i := range rs {
+		rs[i] = zero
+	}
+
+	return Txn{
+		Body: TxnBody{
+			Inputs: []SHA256Sum{
+				SHA256Sum{},
+			},
+			Outputs: []Output{
+				Output{
+					PublicKey: ECCPoint{rGx, rGy},
+					DestKey:   ECCPoint{dkx, dky},
+					BlindSeed: ECCPoint{zero, zero},
+					Commit: Commitment{
+						ECCPoint: commit,
+						RangeProof: RangeProof{
+							Ss: ss,
+						},
+					},
+				},
+			},
+		},
+		Sig: OZRS{
+			Rs: rs,
+			Ss: rs,
+		},
 	}
 }
 
-func GenesisBlock() Block {
-	return Block{
+func GenesisBlock(address WalletPublicKey) Block {
+	coinbaseTxn := NewCoinbaseTxn(address, 0, 0)
+
+	b := Block{
 		Header: BlockHeader{
 			SeqNum:     0,
 			PrevHash:   SHA256Sum{},
 			MerkleRoot: SHA256Sum{},
 			Time:       time.Now(),
-			Difficulty: CURRENT_DIFFICULTY,
+			Difficulty: INITIAL_DIFFICULTY,
 			Nonce:      0,
 		},
-		Txns: []Txn{},
+		Txns: []Txn{
+			coinbaseTxn,
+		},
 	}
+
+	b.Header.MerkleRoot = b.MerkleHash()
+
+	for !b.Header.ValidPoW() {
+		b.Header.Nonce += 1
+	}
+
+	return b
 }
 
 func (b BlockHeader) Json() []byte {
@@ -110,71 +195,3 @@ func (bh BlockHeader) ValidPoW() bool {
 
 	return true
 }
-
-/*
-func Mine() {
-	bc := NewBlockchain()
-
-	g := GenesisBlock()
-	for !g.Header.ValidPoW() {
-		g.Header.Nonce += 1
-	}
-	fmt.Println(fmt.Sprintf("Gen: %v", string(g.Json())))
-
-	fromKey := crypto.NewKey()
-	toKey := crypto.NewKey()
-
-	online := crypto.NewKey()
-	offline := crypto.NewKey()
-
-	//for {
-	b := NewBlock(bc.LastHeader, crypto.Address(fromKey.PublicKey))
-
-	// Create and sign txn
-	txn := NewPaymentTxn(fromKey.PublicKey, crypto.Address(toKey.PublicKey), 10)
-	txn.Inputs[0].Signature = crypto.Sign("", fromKey)
-	b.Txns = append(b.Txns, txn)
-
-	identity, err := NewIdentity("certcoin.net", "")
-	if err != nil {
-		fmt.Println(err)
-		panic(err)
-	}
-
-	// Create and sign registration txn
-	rtxn := NewRegisterTxn(online, offline, fromKey.PublicKey, identity)
-	rtxn.Inputs[2].Signature = crypto.Sign("", fromKey)
-	b.Txns = append(b.Txns, rtxn)
-
-	newOnline := crypto.NewKey()
-	// Create and sign update txn
-	utxn := NewUpdateTxn(newOnline, offline, fromKey.PublicKey, identity)
-	utxn.Inputs[1].Signature = crypto.Sign("", offline)
-	utxn.Inputs[2].Signature = crypto.Sign("", fromKey)
-	b.Txns = append(b.Txns, utxn)
-
-	// Create and sign revoke txn
-	vtxn := NewRevokeTxn(newOnline, offline, fromKey.PublicKey, identity)
-	b.Txns = append(b.Txns, vtxn)
-
-	for !b.Header.ValidPoW() {
-		b.Header.Nonce += 1
-	}
-
-	//fmt.Println(fmt.Sprintf("%v", b.Json()))
-	//fmt.Println(b.Header.Hash())
-
-	if bc.ValidBlock(b) {
-		err = bc.WriteBlock(b)
-		if err != nil {
-			log.Println(err)
-			panic("Unable to save block")
-		} else {
-			fmt.Println("Saved block successfully")
-		}
-	} else {
-		fmt.Println("Invalid Block")
-	}
-	//}
-}
-*/
