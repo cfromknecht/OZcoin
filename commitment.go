@@ -11,58 +11,24 @@ var (
 	H     = computeH()
 )
 
-type PublicCommitment struct {
-	ECCPoint
-	PublicRangeProof
-}
-
 type Commitment struct {
 	ECCPoint
-	Proof RangeProof
-	Blind *big.Int
-	Amt   uint64
-}
-
-func (c Commitment) Public() PublicCommitment {
-	return PublicCommitment{
-		c.ECCPoint,
-		c.Proof.PublicRangeProof,
-	}
+	RangeProof
 }
 
 func RangeCommit(amt uint64, targetBlind *big.Int) Commitment {
 	rp := RangeSign(amt, targetBlind)
 
 	x, y := &big.Int{}, &big.Int{}
-	sumBlind := &big.Int{}
-	sum := uint64(0)
 	for i := uint64(0); i < RANGE_PROOF_LENGTH; i++ {
 		pk := rp.PKs[i][0]
 		x, y = CURVE.Params().Add(x, y, pk.X, pk.Y)
-		sumBlind.Add(sumBlind, rp.Blinds[i])
-
-		sum += (uint64(1) << i) & amt
 	}
 
 	return Commitment{
-		ECCPoint: ECCPoint{x, y},
-		Proof:    rp,
-		Blind:    sumBlind,
-		Amt:      sum,
+		ECCPoint:   ECCPoint{x, y},
+		RangeProof: rp,
 	}
-}
-
-func (c Commitment) Verify() bool {
-	amtBytes := UIntBytes(c.Amt)
-
-	xGx, xGy := CURVE.Params().ScalarBaseMult(c.Blind.Bytes())
-	aHx, aHy := CURVE.Params().ScalarMult(H.X, H.Y, amtBytes[:])
-
-	x, y := CURVE.Params().Add(xGx, xGy, aHx, aHy)
-
-	return c.Proof.Verify() &&
-		x.Cmp(c.X) == 0 &&
-		y.Cmp(c.Y) == 0
 }
 
 func CommitTxn(inputs, outputs []uint64) ([]Commitment,
@@ -98,7 +64,7 @@ func SumZero(pcsi, pcso []Commitment) bool {
 	ix, iy := &big.Int{}, &big.Int{}
 
 	for i, c := range pcsi {
-		if !c.Verify() {
+		if !c.RangeProof.Verify() {
 			fmt.Println("c", i, "failed to verify")
 			return false
 		}
@@ -108,7 +74,7 @@ func SumZero(pcsi, pcso []Commitment) bool {
 
 	ox, oy := &big.Int{}, &big.Int{}
 	for i, c := range pcso {
-		if !c.Verify() {
+		if !c.RangeProof.Verify() {
 			fmt.Println("c", i, "failed to verify")
 			return false
 		}

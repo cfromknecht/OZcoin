@@ -6,3 +6,8 @@ whitepaper/*.log
 whitepaper/*.blg
 whitepaper/*.aux
 whitepaper/*.pdf
+
+# db files
+db/*
+miner/*
+wallet/*

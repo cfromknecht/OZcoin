@@ -5,7 +5,8 @@ import (
 )
 
 type ECCPoint struct {
-	X, Y *big.Int
+	X *big.Int `json:"x"`
+	Y *big.Int `json:"y"`
 }
 
 func (p ECCPoint) Bytes() []byte {
