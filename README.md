@@ -1,3 +1,19 @@
+OZcoin
+======
+
+Pretty Good Money.
+
+OZcoin builds upon recent developments in Confidential Transactions for ring
+signature schemes to deliver higher anonymity and perfect secrecy for
+transaction values.  This anonymity is further improved by standardizing
+transaction sizes and providing a default level of anonymity for all users.
+Mixing coins is done by repeatedly sending to an owned address; note that the 
+holder never loses control of his own coins.  Together, these properties of
+anonymity, confidentiality, and uniformity make OZcoin transactions look more or
+less indistinguishable from each other, and subject to less discrimination that
+plaintext transactions.  OZcoin uses this transaction equality to provide a
+fungible cryptocurrency.
+
 Dependencies
 ============
 `github.com/syndtr/goleveldb/leveldb`
@@ -13,7 +29,7 @@ block and broadcasts the new block.  The wallet client then decrypts and
 collects both the coinbase txn and the signed txn to itself.
 
 Note: Currently, the txn's aren't properly removed the the txn pool, but will
-also not be added to sucessive blocks. So for now they are begign.
+also not be added to successive blocks. So for now they are benign.
 
 Wallet Client
 =====================
@@ -30,7 +46,7 @@ Run `go run miner/run.go`
 This runs a mining client that mines new blocks and accepts txn broadcasts.
 Make sure to run this within 5 seconds of starting the wallet client.
 
-Run `rm -rf miner/db/*` to reset the blockcahin databases. Also remember to
+Run `rm -rf miner/db/*` to reset the blockchain databases. Also remember to
 reset the wallet databases.
 
 Ozcoin writeup: OZRSwriteup.pdf
