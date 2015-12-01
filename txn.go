@@ -1,7 +1,6 @@
 package ozcoin
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -13,142 +12,36 @@ const (
 	TXN_NUM_OUTPUTS = 2
 )
 
+/*
+ * Txn
+ *
+ * Describes how transaction `Ouptut`s are to be transferred.  Each OZCoin txn
+ * draws from 8 inputs to standardize anonymity. Each txn has exactly 2 outputs,
+ * which can be used to return the difference the sender.  This value can be 0
+ * if the entire amount should be sent.
+ */
+
 type Txn struct {
 	Body TxnBody `json:"body"`
 	Sig  OZRS    `json:"sig"`
 }
 
+/*
+ * TxnBody
+ *
+ * The portion of the `Txn` to be signed.
+ */
 type TxnBody struct {
 	Inputs  []SHA256Sum `json:"inputs"`
 	Outputs []Output    `json:"outputs"`
 	Fee     uint64      `json:"fee"`
 }
 
-type Output struct {
-	PublicKey ECCPoint   `json:"pub_key"`
-	DestKey   ECCPoint   `json:"dst_key"`
-	BlindSeed ECCPoint   `json:"blind_seed"`
-	Commit    Commitment `json:"commit"`
-}
-
-func (o Output) Json() []byte {
-	b, err := json.Marshal(o)
-	if err != nil {
-		log.Println(err)
-		panic(err)
-	}
-
-	return b
-}
-
-func (o Output) Hash() SHA256Sum {
-	return Hash(o.Json())
-}
-
-func (o *Output) DecryptCoinbase() *OutputPlaintext {
-	pkHash := Hash(o.PublicKey.Bytes())
-	return &OutputPlaintext{
-		Output:  o,
-		HashPub: base64.StdEncoding.EncodeToString(pkHash.Bytes()),
-	}
-}
-
-func (o *Output) Decrypt(addr WalletPrivateKey) *OutputPlaintext {
-	pkHash := Hash(o.PublicKey.Bytes())
-	op := &OutputPlaintext{
-		Output:  o,
-		HashPub: base64.StdEncoding.EncodeToString(pkHash.Bytes()),
-	}
-
-	// Decrypt amount
-	yOut := o.ComputeBlindingFactor(addr)
-	log.Println("computed blinding factor:", yOut)
-	amount, err := o.DecryptAmount(yOut)
-	if err != nil {
-		log.Println("FAILED TO DECRYPT AMOUNT:", err)
-		return nil
-	}
-
-	op.Amount = amount
-
-	return op
-}
-
-func (o Output) DecryptAmount(yOut *big.Int) (uint64, error) {
-	total := uint64(0)
-	zero := &big.Int{}
-
-	pks := o.Commit.RangeProof.PKs
-	for i, blind := range ComputeBlinds(yOut) {
-		rGx, rGy := CURVE.Params().ScalarBaseMult(blind.Bytes())
-		rGy.Neg(rGy)
-
-		success := false
-		for j, pk := range pks[i] {
-			x, y := CURVE.Params().Add(pk.X, pk.Y, rGx, rGy)
-			if zero.Cmp(x) == 0 && zero.Cmp(y) == 0 {
-				include := uint64(1 - j)
-				total += (uint64(1) << uint64(i)) * include
-				success = true
-				break
-			}
-		}
-
-		if success {
-			continue
-		}
-
-		return 0, errors.New("Couldnt not decrypt amount")
-	}
-
-	return total, nil
-}
-
-func (o Output) ComputeBlindingFactor(addr WalletPrivateKey) *big.Int {
-	zero := &big.Int{}
-	Q := o.BlindSeed
-	// Coinbase txn, blinding factor is 0
-	if zero.Cmp(Q.X) == 0 && zero.Cmp(Q.Y) == 0 {
-		return zero
-	}
-
-	psk := addr.PSK
-	bQx, bQy := CURVE.Params().ScalarMult(Q.X, Q.Y, psk.Bytes())
-	blind := Hash(ECCPoint{bQx, bQy}.Bytes())
-
-	return blind.Int()
-}
-
-func (o Output) BelongsToMe(addr WalletTrackingKey) bool {
-	ppk := addr.PPK
-
-	h := o.HashSharedSecret(addr)
-	dkx, dky := CURVE.Params().ScalarBaseMult(h.Bytes())
-	dkx, dky = CURVE.Params().Add(dkx, dky, ppk.X, ppk.Y)
-
-	return dkx.Cmp(o.DestKey.X) == 0 && dky.Cmp(o.DestKey.Y) == 0
-}
-
-func (o Output) ComputeTxnPrivateKey(addr WalletPrivateKey) *big.Int {
-	h := o.HashSharedSecret(addr.TrackingKey())
-	x := &big.Int{}
-	x.SetBytes(h.Bytes())
-	x.Add(x, addr.PSK)
-
-	dkx, dky := CURVE.Params().ScalarBaseMult(x.Bytes())
-	log.Println("xG:", dkx, dky)
-
-	return x
-}
-
-func (o Output) HashSharedSecret(addr WalletTrackingKey) SHA256Sum {
-	R := o.PublicKey
-	tsk := addr.TSK
-	aRx, aRy := CURVE.Params().ScalarMult(R.X, R.Y, tsk.Bytes())
-
-	return Hash(ECCPoint{aRx, aRy}.Bytes())
-}
-
+/*
+ * Creates a new `Txn` that spends the input at index `idx`.  The secret key
+ * `sk` and blinding factor `yi` allow the sender to compute a valid OZRS
+ * signature.
+ */
 func (c *Client) NewTxn(inputs []Output,
 	sk, yi *big.Int,
 	idx int,
@@ -189,6 +82,70 @@ func (c *Client) NewTxn(inputs []Output,
 	return txn
 }
 
+/*
+ * Builds a new coinbase txn given the block sequence, total block fees, and the
+ * destination address.
+ */
+func NewCoinbaseTxn(address WalletPublicKey, seqNum, fee uint64) Txn {
+	tpk := address.TPK
+	ppk := address.PPK
+
+	zero := &big.Int{}
+	coinbase := CoinbaseValue(seqNum) + fee
+	coinbaseBytes := UIntBytes(coinbase)
+	commit := PedersenSum(zero.Bytes(), coinbaseBytes)
+
+	// Public Key
+	r := RandomBytes()
+	rGx, rGy := CURVE.ScalarBaseMult(r.Bytes())
+
+	// Destination Key
+	secx, secy := CURVE.Params().ScalarMult(tpk.X, tpk.Y, r.Bytes())
+	h := Hash(ECCPoint{secx, secy}.Bytes())
+	dkx, dky := CURVE.Params().ScalarBaseMult(h.Bytes())
+	dkx, dky = CURVE.Params().Add(dkx, dky, ppk.X, ppk.Y)
+
+	ss := [RANGE_PROOF_LENGTH][2]*big.Int{}
+	for i, pair := range ss {
+		for j := range pair {
+			ss[i][j] = zero
+		}
+	}
+	rs := [TXN_NUM_INPUTS]*big.Int{}
+	for i := range rs {
+		rs[i] = zero
+	}
+
+	return Txn{
+		Body: TxnBody{
+			Inputs: []SHA256Sum{
+				SHA256Sum{},
+			},
+			Outputs: []Output{
+				Output{
+					PublicKey: ECCPoint{rGx, rGy},
+					DestKey:   ECCPoint{dkx, dky},
+					BlindSeed: ECCPoint{zero, zero},
+					Commit: Commitment{
+						ECCPoint: commit,
+						RangeProof: RangeProof{
+							Ss: ss,
+						},
+					},
+				},
+			},
+		},
+		Sig: OZRS{
+			Rs: rs,
+			Ss: rs,
+		},
+	}
+}
+
+/*
+ * Computes the txn public key, destination key, blind seed, and commitment that
+ * sends each amount to its corresponding recipient.
+ */
 func BuildOutputs(amts []uint64, rcpts []WalletPublicKey) ([]Output, *big.Int) {
 	outputs := []Output{}
 	blindSum := &big.Int{}
@@ -236,6 +193,9 @@ func BuildOutputs(amts []uint64, rcpts []WalletPublicKey) ([]Output, *big.Int) {
 	return outputs, blindSum
 }
 
+/*
+ * The json bytes to be signed.
+ */
 func (txn Txn) BodyJson() []byte {
 	b, err := json.Marshal(txn.Body)
 	if err != nil {
@@ -246,6 +206,9 @@ func (txn Txn) BodyJson() []byte {
 	return b
 }
 
+/*
+ * Full json for txn.
+ */
 func (txn Txn) Json() []byte {
 	b, err := json.Marshal(txn)
 	if err != nil {
@@ -256,10 +219,17 @@ func (txn Txn) Json() []byte {
 	return b
 }
 
+/*
+ * Hash of full txn json.
+ */
 func (txn Txn) Hash() SHA256Sum {
 	return Hash(txn.Json())
 }
 
+/*
+ * Computes the preimage of a public key, H_p(pk), and multiplies it by the
+ * secret key. If `sk` is nil, the base point is simply returned.
+ */
 func Preimage(pk ECCPoint, sk *big.Int) ECCPoint {
 	hp := HashToPt(pk.Bytes())
 	if sk != nil {
@@ -267,4 +237,77 @@ func Preimage(pk ECCPoint, sk *big.Int) ECCPoint {
 	}
 
 	return hp
+}
+
+/*
+ * Sends the txn all peers.
+ */
+func (c *Client) BcastTxn(hash SHA256Sum) error {
+	iter := c.dbm.peerDB.NewIterator(nil, nil)
+	for iter.Next() {
+		address := string(iter.Key())
+		go c.sendBcast("GossipCore.BcastTxnRPC", address, hash)
+	}
+	iter.Release()
+
+	return iter.Error()
+}
+
+/*
+ * Tries to load a txn from local storage. If this fails, the txn is fetched
+ * from `req.Address`.
+ */
+func (c *Client) LoadOrFetchTxn(req HashMsg) (*Txn, error) {
+	txn, err := c.LoadTxn(req.Hash)
+	if err != nil {
+		txn, err = c.FetchTxn(req.Hash, req.Address)
+		if err != nil {
+			log.Println("FETCH TXN FAILED")
+			return nil, err
+		}
+	}
+
+	if txn == nil {
+		return nil, errors.New("Unable to load txn")
+	}
+
+	log.Println("Txn fetched successfully")
+
+	return txn, nil
+}
+
+/*
+ * Tries to load a txn from local storage.
+ */
+func (c *Client) LoadTxn(hash SHA256Sum) (*Txn, error) {
+	txn, err := c.GetTxnPool(hash)
+	if err == nil {
+		return txn, nil
+	}
+
+	if c.Type != BLOCKCHAIN_CLIENT {
+		return nil, errors.New("Not BLOCKCHAIN_CLIENT")
+	}
+
+	// Lookup mapping
+	blockHash, err := c.MapToBlock(hash)
+	if err != nil {
+		return nil, err
+	}
+
+	// Load block
+	block, err := c.GetBlock(blockHash)
+	if err != nil {
+		return nil, err
+	}
+
+	// Iterate though transactions to find preimage
+	for _, t := range block.Txns {
+		if hash == Hash(t.Sig.Preimage.Bytes()) {
+			*txn = t
+			return txn, nil
+		}
+	}
+
+	return nil, errors.New("Could not load txn")
 }

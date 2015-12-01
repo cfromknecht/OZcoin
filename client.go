@@ -2,7 +2,6 @@ package ozcoin
 
 import (
 	"log"
-	"time"
 )
 
 type ClientType uint8
@@ -14,14 +13,26 @@ const (
 
 var SIGNAL = struct{}{}
 
+/*
+ * Stores full copies of every block and txn pool.
+ */
 func NewBlockchain(clientAddress, walletAddress, password string) *Client {
 	return newClient(BLOCKCHAIN_CLIENT, clientAddress, walletAddress, password, false)
 }
 
+/*
+ * Only stores block headers and preimages.
+ */
 func NewSPV(clientAddress, walletAddress, password string) *Client {
 	return newClient(SVP_CLIENT, clientAddress, walletAddress, password, true)
 }
 
+/*
+ * Client
+ *
+ * Provides access to database operations and facilitates the consensus
+ * mechanisms.
+ */
 type Client struct {
 	Type               ClientType
 	LastHeader         BlockHeader
@@ -47,6 +58,9 @@ type Client struct {
 	Wallet             *WalletClient
 }
 
+/*
+ * Builds a new client and starts the gossip rpc server.
+ */
 func newClient(t ClientType, clientAddress, walletAddress, password string, updateWallet bool) *Client {
 	client := &Client{
 		Type:               t,
@@ -101,6 +115,8 @@ func (c *Client) run() {
 	for {
 		select {
 		case req := <-c.BlockHashChan:
+			// Resolve incoming block hash
+
 			// Currently resolving
 			if _, ok := frontier[req.Hash]; ok {
 				continue
@@ -118,6 +134,9 @@ func (c *Client) run() {
 			go c.AddOrOrphan(req, startChan, doneChan)
 
 		case req := <-c.TxnHashChan:
+			// Resolve incoming txn hash
+
+			// Currently resolving
 			if _, ok := frontier[req.Hash]; ok {
 				continue
 			}
@@ -134,12 +153,17 @@ func (c *Client) run() {
 			go c.AddToTxnPool(req, startChan, doneChan)
 
 		case block := <-c.BlockChan:
+			// New Block
+			frontier[block.Header.Hash()] = SIGNAL
 			go c.AdoptMinedBlock(block, startChan, doneChan)
 
 		case txn := <-c.TxnChan:
+			// New Txn
+			frontier[txn.Hash()] = SIGNAL
 			go c.AdoptTxn(txn, startChan, doneChan)
 
 		case hash := <-doneChan:
+			// Remove from frontier and signal next operation
 			delete(frontier, hash)
 			go func() { startChan <- SIGNAL }()
 
@@ -147,6 +171,9 @@ func (c *Client) run() {
 	}
 }
 
+/*
+ * Validates and adds a txn to the txn pool.
+ */
 func (c *Client) AdoptTxn(txn Txn, startChan chan struct{}, doneChan chan SHA256Sum) {
 	_ = <-startChan
 
@@ -154,6 +181,11 @@ func (c *Client) AdoptTxn(txn Txn, startChan chan struct{}, doneChan chan SHA256
 	defer func() { doneChan <- txn.Hash() }()
 
 	log.Println("New txn:", string(txn.Json()))
+
+	if !ValidTxn(txn) && !ValidCoinbaseTxn(txn) {
+		log.Println("Invalid txn")
+		return
+	}
 
 	err := c.PutTxnPool(txn)
 	if err != nil {
@@ -171,6 +203,9 @@ func (c *Client) AdoptTxn(txn Txn, startChan chan struct{}, doneChan chan SHA256
 
 }
 
+/*
+ * Validates and extends the main chain with mined block.
+ */
 func (c *Client) AdoptMinedBlock(block Block, startChan chan struct{}, doneChan chan SHA256Sum) {
 	_ = <-startChan
 
@@ -214,6 +249,9 @@ func (c *Client) AdoptMinedBlock(block Block, startChan chan struct{}, doneChan 
 	log.Println("Broadcast successful")
 }
 
+/*
+ * Returns nil if client is already aware of block.
+ */
 func (c *Client) FilterBlock(req HashMsg) error {
 	// Load header from main header database
 	_, err := c.GetHeader(req.Hash)
@@ -229,6 +267,9 @@ func (c *Client) FilterBlock(req HashMsg) error {
 	return err
 }
 
+/*
+ * Returns nil if client is already aware of txn.
+ */
 func (c *Client) FilterTxn(req HashMsg) error {
 	// Load header from txn pool database
 	_, err := c.GetTxnPool(req.Hash)
@@ -241,20 +282,4 @@ func (c *Client) FilterTxn(req HashMsg) error {
 	}
 
 	return err
-}
-
-func ValidHeader(header BlockHeader) bool {
-	if !header.ValidPoW() {
-		return false
-	}
-
-	if header.Time.Add(2 * time.Hour).Before(time.Now()) {
-		return false
-	}
-
-	if (header.SeqNum == 0) && (header.PrevHash != SHA256Sum{}) {
-		return false
-	}
-
-	return true
 }

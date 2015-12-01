@@ -38,124 +38,16 @@ func (c *Client) AddOrOrphan(req HashMsg, startChan chan struct{}, doneChan chan
 	doneChan <- req.Hash
 }
 
-func (c *Client) LoadOrFetchBlock(req HashMsg) (*Block, error) {
-	log.Println("Requesting block from:", req.Address)
-
-	// If this failed, request block
-	block, err := c.LoadBlock(req.Hash)
-	if err != nil {
-		block, err = c.FetchBlock(req.Hash, req.Address)
-		if err != nil {
-			log.Println("FETCH BLOCK FAILED:", err)
-			return nil, err
-		}
-	}
-
-	if block == nil {
-		return nil, errors.New("Unable to load block")
-
-	}
-	log.Println("LOADED BLOCK:", *block)
-
-	return block, nil
-}
-
-func (c *Client) LoadOrFetchTxn(req HashMsg) (*Txn, error) {
-	txn, err := c.LoadTxn(req.Hash)
-	if err != nil {
-		txn, err = c.FetchTxn(req.Hash, req.Address)
-		if err != nil {
-			log.Println("FETCH TXN FAILED")
-			return nil, err
-		}
-	}
-
-	if txn == nil {
-		return nil, errors.New("Unable to load txn")
-	}
-
-	log.Println("Txn fetched successfully")
-
-	return txn, nil
-}
-
-func (c *Client) LoadBlock(hash SHA256Sum) (*Block, error) {
-	if c.Type != BLOCKCHAIN_CLIENT {
-		return nil, errors.New("Not BLOCKCHAIN_CLIENT")
-	}
-
-	block, err := c.GetBlock(hash)
-	if err != nil {
-		block, err = c.GetSideBlock(hash)
-		if err != nil {
-			block, err = c.GetOrphanBlock(hash)
-		}
-	}
-
-	return block, err
-}
-
-func (c *Client) LoadTxn(hash SHA256Sum) (*Txn, error) {
-	txn, err := c.GetTxnPool(hash)
-	if err == nil {
-		return txn, nil
-	}
-
-	if c.Type != BLOCKCHAIN_CLIENT {
-		return nil, errors.New("Not BLOCKCHAIN_CLIENT")
-	}
-
-	// Lookup mapping
-	blockHash, err := c.MapToBlock(hash)
-	if err != nil {
-		return nil, err
-	}
-
-	// Load block
-	block, err := c.GetBlock(blockHash)
-	if err != nil {
-		return nil, err
-	}
-
-	// Iterate though transactions to find preimage
-	for _, t := range block.Txns {
-		if hash == Hash(t.Sig.Preimage.Bytes()) {
-			*txn = t
-			return txn, nil
-		}
-	}
-
-	return nil, errors.New("Could not load txn")
-}
-
-func (c *Client) LoadOutput(hash SHA256Sum) (*Output, error) {
-	if c.Type != BLOCKCHAIN_CLIENT {
-		return nil, errors.New("Not BLOCKCHAIN_CLIENT")
-	}
-
-	blockHash, err := c.MapToBlock(hash)
-	if err != nil {
-		return nil, err
-	}
-
-	block, err := c.LoadBlock(blockHash)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, txn := range block.Txns {
-		for _, o := range txn.Body.Outputs {
-			if o.Hash() == hash {
-				output := &Output{}
-				*output = o
-				return output, nil
-			}
-		}
-	}
-
-	return nil, errors.New("Could not load output")
-}
-
+/*
+ * Primary consensus algorithm
+ *
+ * Recursively tries to adopt a given block by:
+ *   1. Load block
+ *   2. Extends main or side chain? Extend and done
+ *   3. Extends Orphan? AddOrOrphanHelper for PrevHash
+ *   4. If adoption failed? Save block and done
+ *   5. Now extends main or side chain? Extend and done
+ */
 func (c *Client) AddOrOrphanHelper(req HashMsg) (bool, error) {
 	// Load block or fetch block
 	block, err := c.LoadOrFetchBlock(req)
@@ -231,6 +123,9 @@ func (c *Client) AddOrOrphanHelper(req HashMsg) (bool, error) {
 	panic("THIS SHOULD NEVER HAPPEN")
 }
 
+/*
+ * Adds the block to the main chain database.
+ */
 func (c *Client) ExtendMainChain(header BlockHeader, block *Block) (bool, error) {
 	if !c.PostValidBlock(*block, nil, nil) {
 		log.Println("Block is not post valid")
@@ -264,6 +159,10 @@ func (c *Client) ExtendMainChain(header BlockHeader, block *Block) (bool, error)
 	return true, nil
 }
 
+/*
+ * Adds a block to an existing side chain. If this new chain is heavier than the
+ * main chain, the main chain is swapped for the side chain.
+ */
 func (c *Client) ExtendSideChain(header BlockHeader, block *Block) (bool, error) {
 	// Get fork paths
 	mainPath, sidePath, err := c.FindForkPaths(header.Hash())
@@ -312,6 +211,9 @@ func (c *Client) ExtendSideChain(header BlockHeader, block *Block) (bool, error)
 	return true, nil
 }
 
+/*
+ * Replaces the main chain with a side chain.
+ */
 func (c *Client) SwapMainFork(mainPath, sidePath []SHA256Sum) error {
 	headerBatch := &db.Batch{}
 	sideHeaderBatch := &db.Batch{}
@@ -483,6 +385,10 @@ func (c *Client) SwapMainFork(mainPath, sidePath []SHA256Sum) error {
 	return nil
 }
 
+/*
+ * Computes the fork hash for where the side chain meets the main chain. Then
+ * returns a list of hashes in each fork after the fork hash.
+ */
 func (c *Client) FindForkPaths(sidehash SHA256Sum) ([]SHA256Sum, []SHA256Sum, error) {
 	prevHeader, err := c.GetSideHeader(sidehash)
 	if err != nil {
@@ -535,47 +441,9 @@ func (c *Client) FindForkPaths(sidehash SHA256Sum) ([]SHA256Sum, []SHA256Sum, er
 	}
 }
 
-func (c *Client) FindOutput(hash SHA256Sum) (*Output, error) {
-	output, err := c.LoadOutput(hash)
-	if err == nil {
-		return output, nil
-	}
-
-	iter := c.dbm.peerDB.NewIterator(nil, nil)
-	for iter.Next() {
-		address := string(iter.Key())
-		output, err := c.FetchOutput(hash, address)
-		if err == nil {
-			return output, nil
-		}
-	}
-	iter.Release()
-
-	return nil, iter.Error()
-}
-
-func (c *Client) FindBlock(hash SHA256Sum) (*Block, error) {
-	log.Println("Loading block")
-	block, err := c.LoadBlock(hash)
-	if err == nil {
-		return block, nil
-	}
-
-	log.Println("Iterate peers")
-	iter := c.dbm.peerDB.NewIterator(nil, nil)
-	for iter.Next() {
-		address := string(iter.Key())
-		log.Println("Fetch block from", address)
-		block, err := c.FetchBlock(hash, address)
-		if err == nil {
-			return block, nil
-		}
-	}
-	iter.Release()
-
-	return nil, iter.Error()
-}
-
+/*
+ * Wraps the AddToTxnPoolHelper to be atomic and broadcast on success.
+ */
 func (c *Client) AddToTxnPool(req HashMsg, startChan chan struct{}, doneChan chan SHA256Sum) {
 	// Wait to make chain operations atomic
 	_ = <-startChan
@@ -596,6 +464,9 @@ func (c *Client) AddToTxnPool(req HashMsg, startChan chan struct{}, doneChan cha
 	doneChan <- req.Hash
 }
 
+/*
+ * Checks that a txn is Valid and then adds it to Txn Pool.
+ */
 func (c *Client) AddToTxnPoolHelper(req HashMsg) (bool, error) {
 	txn, err := c.LoadOrFetchTxn(req)
 	if err != nil {

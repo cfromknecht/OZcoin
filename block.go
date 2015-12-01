@@ -2,15 +2,16 @@ package ozcoin
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
-	"math/big"
 	"time"
 )
 
-const (
-	HASH_GENESIS_BLOCK = "hwm5tjMI9ZsvG2VwNKeMtJq7PDLDvPM/hLFQ2VYdE88="
-)
-
+/*
+ * BlockHeader
+ *
+ * Records information for properly sequencing and verifying blocks.
+ */
 type BlockHeader struct {
 	SeqNum     uint64    `json:"seq_num"`
 	PrevHash   SHA256Sum `json:"prev_hash"`
@@ -20,11 +21,71 @@ type BlockHeader struct {
 	Nonce      uint64    `json:"nonce:"`
 }
 
+/*
+ * Checks PoW, Time, and Genesis Hash.
+ */
+func ValidHeader(header BlockHeader) bool {
+	if !header.ValidPoW() {
+		return false
+	}
+
+	if header.Time.Add(2 * time.Hour).Before(time.Now()) {
+		return false
+	}
+
+	if (header.SeqNum == 0) && (header.PrevHash != SHA256Sum{}) {
+		return false
+	}
+
+	return true
+}
+
+/*
+ * Checks that a block header's hash is lower than the claimed difficulty.
+ */
+func (bh BlockHeader) ValidPoW() bool {
+	difficulty := bh.Difficulty
+	zeroBytes := difficulty / 8
+	bitOffset := difficulty % 8
+
+	h := bh.Hash()
+	for i, c := range h {
+		if uint64(i) < zeroBytes {
+			if c != 0 {
+				return false
+			}
+		} else {
+			break
+		}
+	}
+
+	c := h[zeroBytes]
+	for j := 0; j < 8; j++ {
+		if uint64(j) < bitOffset {
+			if (c >> (7 - uint64(j)) & 1) != 0 {
+				return false
+			}
+		} else {
+			break
+		}
+	}
+
+	return true
+}
+
+/*
+ * Block
+ *
+ * Stores a block header along with a list of txns.
+ */
 type Block struct {
 	Header BlockHeader `json:"header"`
 	Txns   []Txn       `json:"txns"`
 }
 
+/*
+ * The blocks's json bytes.
+ */
 func (b Block) Json() []byte {
 	blockJson, err := json.Marshal(b)
 	if err != nil {
@@ -35,6 +96,10 @@ func (b Block) Json() []byte {
 	return blockJson
 }
 
+/*
+ * Creates a new block to mined that extends the current `LastHeader`.  The
+ * coinbase txn is sent to the address provided.
+ */
 func (c *Client) NewBlock(prev BlockHeader, address WalletPublicKey) Block {
 	seqNum := prev.SeqNum + 1
 
@@ -70,62 +135,9 @@ func (c *Client) NewBlock(prev BlockHeader, address WalletPublicKey) Block {
 	return block
 }
 
-func NewCoinbaseTxn(address WalletPublicKey, seqNum, fee uint64) Txn {
-	tpk := address.TPK
-	ppk := address.PPK
-
-	zero := &big.Int{}
-	coinbase := CoinbaseValue(seqNum) + fee
-	coinbaseBytes := UIntBytes(coinbase)
-	commit := PedersenSum(zero.Bytes(), coinbaseBytes)
-
-	// Public Key
-	r := RandomBytes()
-	rGx, rGy := CURVE.ScalarBaseMult(r.Bytes())
-
-	// Destination Key
-	secx, secy := CURVE.Params().ScalarMult(tpk.X, tpk.Y, r.Bytes())
-	h := Hash(ECCPoint{secx, secy}.Bytes())
-	dkx, dky := CURVE.Params().ScalarBaseMult(h.Bytes())
-	dkx, dky = CURVE.Params().Add(dkx, dky, ppk.X, ppk.Y)
-
-	ss := [RANGE_PROOF_LENGTH][2]*big.Int{}
-	for i, pair := range ss {
-		for j := range pair {
-			ss[i][j] = zero
-		}
-	}
-	rs := [TXN_NUM_INPUTS]*big.Int{}
-	for i := range rs {
-		rs[i] = zero
-	}
-
-	return Txn{
-		Body: TxnBody{
-			Inputs: []SHA256Sum{
-				SHA256Sum{},
-			},
-			Outputs: []Output{
-				Output{
-					PublicKey: ECCPoint{rGx, rGy},
-					DestKey:   ECCPoint{dkx, dky},
-					BlindSeed: ECCPoint{zero, zero},
-					Commit: Commitment{
-						ECCPoint: commit,
-						RangeProof: RangeProof{
-							Ss: ss,
-						},
-					},
-				},
-			},
-		},
-		Sig: OZRS{
-			Rs: rs,
-			Ss: rs,
-		},
-	}
-}
-
+/*
+ * Mines the Genesis block and sends the coinbase to `address`.
+ */
 func GenesisBlock(address WalletPublicKey) Block {
 	coinbaseTxn := NewCoinbaseTxn(address, 0, 0)
 
@@ -152,6 +164,9 @@ func GenesisBlock(address WalletPublicKey) Block {
 	return b
 }
 
+/*
+ * The json bytes for the block header.
+ */
 func (b BlockHeader) Json() []byte {
 	headerJson, err := json.Marshal(b)
 	if err != nil {
@@ -162,36 +177,91 @@ func (b BlockHeader) Json() []byte {
 	return headerJson
 }
 
+/*
+ * The hash to end all hashes.
+ */
 func (b BlockHeader) Hash() SHA256Sum {
 	return Hash(b.Json())
 }
 
-func (bh BlockHeader) ValidPoW() bool {
-	difficulty := bh.Difficulty
-	zeroBytes := difficulty / 8
-	bitOffset := difficulty % 8
+/*
+ * Tries to load a block from local storage. If this fails, the block is fetched
+ * from `req.Address`.
+ */
+func (c *Client) LoadOrFetchBlock(req HashMsg) (*Block, error) {
+	log.Println("Requesting block from:", req.Address)
 
-	h := bh.Hash()
-	for i, c := range h {
-		if uint64(i) < zeroBytes {
-			if c != 0 {
-				return false
-			}
-		} else {
-			break
+	// If this failed, request block
+	block, err := c.LoadBlock(req.Hash)
+	if err != nil {
+		block, err = c.FetchBlock(req.Hash, req.Address)
+		if err != nil {
+			log.Println("FETCH BLOCK FAILED:", err)
+			return nil, err
 		}
 	}
 
-	c := h[zeroBytes]
-	for j := 0; j < 8; j++ {
-		if uint64(j) < bitOffset {
-			if (c >> (7 - uint64(j)) & 1) != 0 {
-				return false
-			}
-		} else {
-			break
+	if block == nil {
+		return nil, errors.New("Unable to load block")
+
+	}
+	log.Println("LOADED BLOCK:", *block)
+
+	return block, nil
+}
+
+/*
+ * Tries to load a block from local storage.
+ */
+func (c *Client) LoadBlock(hash SHA256Sum) (*Block, error) {
+	if c.Type != BLOCKCHAIN_CLIENT {
+		return nil, errors.New("Not BLOCKCHAIN_CLIENT")
+	}
+
+	block, err := c.GetBlock(hash)
+	if err != nil {
+		block, err = c.GetSideBlock(hash)
+		if err != nil {
+			block, err = c.GetOrphanBlock(hash)
 		}
 	}
 
-	return true
+	return block, err
+}
+
+/*
+ * Tries to load a block from local storage, otherwise iterates through peers
+ * until one succeeds.
+ */
+func (c *Client) FindBlock(hash SHA256Sum) (*Block, error) {
+	block, err := c.LoadBlock(hash)
+	if err == nil {
+		return block, nil
+	}
+
+	iter := c.dbm.peerDB.NewIterator(nil, nil)
+	for iter.Next() {
+		address := string(iter.Key())
+		block, err := c.FetchBlock(hash, address)
+		if err == nil {
+			return block, nil
+		}
+	}
+	iter.Release()
+
+	return nil, iter.Error()
+}
+
+/*
+ * Sends block to all peers.
+ */
+func (c *Client) BcastBlock(hash SHA256Sum) error {
+	iter := c.dbm.peerDB.NewIterator(nil, nil)
+	for iter.Next() {
+		address := string(iter.Key())
+		go c.sendBcast("GossipCore.BcastBlockRPC", address, hash)
+	}
+	iter.Release()
+
+	return iter.Error()
 }

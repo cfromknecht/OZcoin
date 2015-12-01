@@ -35,9 +35,31 @@ type RPCHeader struct {
 	Address string
 }
 
+/*
+ * HashMsg
+ *
+ * Primary identifier for broadcasting new information.
+ */
+
 type HashMsg struct {
 	RPCHeader
 	Hash SHA256Sum
+}
+
+func (c *Client) NewHashMsg(hash SHA256Sum) HashMsg {
+	return HashMsg{
+		RPCHeader: RPCHeader{
+			Address: c.Address,
+		},
+		Hash: hash,
+	}
+}
+
+func (hm HashMsg) NewHash(hash SHA256Sum) HashMsg {
+	return HashMsg{
+		RPCHeader: hm.RPCHeader,
+		Hash:      hash,
+	}
 }
 
 type HeaderMsg struct {
@@ -60,6 +82,9 @@ type OutputMsg struct {
 	Output
 }
 
+/*
+ * Updates peers with incoming requests
+ */
 func (c *Client) HandleRPC(request RPCHeader, response *RPCHeader) error {
 	err := c.PutPeer(request.Address)
 	if err != nil {
@@ -74,61 +99,9 @@ func (c *Client) HandleRPC(request RPCHeader, response *RPCHeader) error {
 	return nil
 }
 
-func (c *Client) NewHashMsg(hash SHA256Sum) HashMsg {
-	return HashMsg{
-		RPCHeader: RPCHeader{
-			Address: c.Address,
-		},
-		Hash: hash,
-	}
-}
-
-func (hm HashMsg) NewHash(hash SHA256Sum) HashMsg {
-	return HashMsg{
-		RPCHeader: hm.RPCHeader,
-		Hash:      hash,
-	}
-}
-
-func (c *Client) BcastBlock(hash SHA256Sum) error {
-	iter := c.dbm.peerDB.NewIterator(nil, nil)
-	for iter.Next() {
-		address := string(iter.Key())
-		go c.sendBcast("GossipCore.BcastBlockRPC", address, hash)
-	}
-	iter.Release()
-
-	return iter.Error()
-}
-
-func (c *Client) BcastTxn(hash SHA256Sum) error {
-	iter := c.dbm.peerDB.NewIterator(nil, nil)
-	for iter.Next() {
-		address := string(iter.Key())
-		go c.sendBcast("GossipCore.BcastTxnRPC", address, hash)
-	}
-	iter.Release()
-
-	return iter.Error()
-}
-
-func (c *Client) sendBcast(method, address string, hash SHA256Sum) {
-	peer, err := c.dialPeer(address)
-	if err != nil {
-		err = c.dbm.peerDB.Delete([]byte(address), nil)
-		if err != nil {
-			log.Println(err)
-		}
-		return
-	}
-
-	req := c.NewHashMsg(hash)
-	err = peer.Call(method, &req, &RPCHeader{})
-	if err != nil {
-		log.Println("Failed to broadcast", err)
-	}
-}
-
+/*
+ * Sends the incoming block hash to the client to be resolved.
+ */
 func (gc *GossipCore) BcastBlockRPC(req HashMsg, res *RPCHeader) error {
 	err := gc.c.HandleRPC(req.RPCHeader, res)
 	if err != nil {
@@ -142,6 +115,9 @@ func (gc *GossipCore) BcastBlockRPC(req HashMsg, res *RPCHeader) error {
 	return nil
 }
 
+/*
+ * Sends the incoming txn hash to the client to be resolved.
+ */
 func (gc *GossipCore) BcastTxnRPC(req HashMsg, res *RPCHeader) error {
 	err := gc.c.HandleRPC(req.RPCHeader, res)
 	if err != nil {
@@ -155,14 +131,9 @@ func (gc *GossipCore) BcastTxnRPC(req HashMsg, res *RPCHeader) error {
 	return nil
 }
 
-func (s *Client) dialPeer(address string) (*rpc.Client, error) {
-	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
-	if err != nil {
-		return nil, err
-	}
-
-	return rpc.NewClient(conn), nil
-}
+/*
+ * Fetch Header
+ */
 
 func (s *Client) FetchHeader(hash SHA256Sum, address string) (*BlockHeader, error) {
 	peer, err := s.dialPeer(address)
@@ -209,6 +180,10 @@ func (gc *GossipCore) FetchHeaderRPC(req HashMsg, res *HeaderMsg) error {
 	return nil
 }
 
+/*
+ * Fetch Block
+ */
+
 func (s *Client) FetchBlock(hash SHA256Sum, address string) (*Block, error) {
 	peer, err := s.dialPeer(address)
 	if err != nil {
@@ -252,6 +227,10 @@ func (gc *GossipCore) FetchBlockRPC(req HashMsg, res *BlockMsg) error {
 	return nil
 }
 
+/*
+ * Fetch Txn
+ */
+
 func (c *Client) FetchTxn(hash SHA256Sum, address string) (*Txn, error) {
 	peer, err := c.dialPeer(address)
 	if err != nil {
@@ -291,6 +270,10 @@ func (gc *GossipCore) FetchTxnRPC(req HashMsg, res *TxnMsg) error {
 	return nil
 }
 
+/*
+ * Fetch Output
+ */
+
 func (c *Client) FetchOutput(hash SHA256Sum, address string) (*Output, error) {
 	peer, err := c.dialPeer(address)
 	if err != nil {
@@ -328,4 +311,33 @@ func (gc *GossipCore) FetchOutputRPC(req HashMsg, res *OutputMsg) error {
 	res.Output = *output
 
 	return nil
+}
+
+/*
+ * Returns a new rpc connection with the address.
+ */
+func (s *Client) dialPeer(address string) (*rpc.Client, error) {
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	return rpc.NewClient(conn), nil
+}
+
+func (c *Client) sendBcast(method, address string, hash SHA256Sum) {
+	peer, err := c.dialPeer(address)
+	if err != nil {
+		err = c.dbm.peerDB.Delete([]byte(address), nil)
+		if err != nil {
+			log.Println(err)
+		}
+		return
+	}
+
+	req := c.NewHashMsg(hash)
+	err = peer.Call(method, &req, &RPCHeader{})
+	if err != nil {
+		log.Println("Failed to broadcast", err)
+	}
 }

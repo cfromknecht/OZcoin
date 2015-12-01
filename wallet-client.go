@@ -11,6 +11,13 @@ import (
 	"net/http"
 )
 
+/*
+ * WalletClient
+ *
+ * Provides a representation of the current plaintext outputs and, public keys
+ * belonging to a user.  Note that the secret keys remain on the server.
+ */
+
 type WalletClient struct {
 	Address     string
 	WalletToken SHA256Sum
@@ -18,6 +25,10 @@ type WalletClient struct {
 	Outputs     []OutputPlaintext
 }
 
+/*
+ * Attempts to authorize the client to the server.  If successful, the client
+ * receives a token to provide in future requests.
+ */
 func (wp *WalletClient) OpenWallet(password string) error {
 	serializedPassword, err := MarshalPassword(password)
 	if err != nil {
@@ -43,6 +54,9 @@ func (wp *WalletClient) OpenWallet(password string) error {
 	return nil
 }
 
+/*
+ * Retrieves the tracking keys used during mining.
+ */
 func (wc *WalletClient) TrackingKeys() ([]WalletTrackingKey, error) {
 	bytes, err := wc.POST("/tracking", nil)
 	if err != nil {
@@ -58,15 +72,28 @@ func (wc *WalletClient) TrackingKeys() ([]WalletTrackingKey, error) {
 	return tkm.TrackingKeys, nil
 }
 
+/*
+ * Informs the wallet server of a new block, storing plaintext outputs if they
+ * belong to me.
+ */
 func (wc *WalletClient) NewBlock(b Block) error {
 	_, err := wc.POST("/new-block", b.Json())
 	return err
 }
 
+/*
+ * Informs the wallet server to delete a block, removing plaintext outputs if
+ * they belong to me.
+ */
 func (wc *WalletClient) DeleteBlock(b Block) error {
 	_, err := wc.POST("/delete-block", b.Json())
 	return err
 }
+
+/*
+ * Sends the address, amount, and fee to the wallet server to be signed.  If
+ * successful, the server initiated a broadcast to the miner's txn pool.
+ */
 
 func (wc *WalletClient) SignTxn(addr *WalletPublicKey, amt, fee uint64) (*Txn, error) {
 	signMsg := SignMsg{
@@ -97,6 +124,10 @@ func (wc *WalletClient) SignTxn(addr *WalletPublicKey, amt, fee uint64) (*Txn, e
 	return txn, nil
 }
 
+/*
+ * Retrieves the balance and plaintext outputs from the wallet-server.
+ */
+
 func (wc *WalletClient) Balance() (*BalanceMsg, error) {
 	bytes, err := wc.POST("/balance", nil)
 	if err != nil {
@@ -112,6 +143,10 @@ func (wc *WalletClient) Balance() (*BalanceMsg, error) {
 	return bm, nil
 }
 
+/*
+ * Stub for all POST requests made to the wallet server.  Attaches cookie to all
+ * outgoing connections unless performing initial authentication.
+ */
 func (wc *WalletClient) POST(relativeUrl string, data []byte) ([]byte, error) {
 	url := "http://" + wc.Address + relativeUrl
 	dataBuf := bytes.NewBuffer(data)
@@ -151,10 +186,16 @@ func (wc *WalletClient) POST(relativeUrl string, data []byte) ([]byte, error) {
 	return body, nil
 }
 
+/*
+ * Base64 encodes a token to be sent as a cookie.
+ */
 func (wc *WalletClient) MarshalToken() string {
 	return base64.StdEncoding.EncodeToString(wc.WalletToken[:])
 }
 
+/*
+ * Formats a password in a JSON PasswordMsg.
+ */
 func MarshalPassword(password string) ([]byte, error) {
 	ar := PasswordMsg{
 		Password: password,
@@ -167,6 +208,10 @@ func MarshalPassword(password string) ([]byte, error) {
 
 	return b, nil
 }
+
+/*
+ * Database Connections
+ */
 
 func (w *WalletServer) OpenAuthDB() *db.DB {
 	authDB, err := db.OpenFile(w.AuthDBPath, nil)
