@@ -2,7 +2,6 @@ package ozcoin
 
 import (
 	"encoding/json"
-	"log"
 	"math/big"
 )
 
@@ -51,7 +50,6 @@ func NewPrivateKey() *WalletPrivateKey {
 		PSK: psk,
 	}
 
-	log.Println("Wallet Private Key:", w)
 	return w
 }
 

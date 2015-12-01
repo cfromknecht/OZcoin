@@ -1,19 +1,12 @@
 package ozcoin
 
 import (
-	"testing"
-
-	"log"
 	"math/big"
+	"testing"
 )
 
 func TestOZRSSign(t *testing.T) {
-	zero := &big.Int{}
 	prevAmt := uint64(5000000000)
-	prevBytes := UIntBytes(prevAmt)
-	prevCommit := PedersenSum(zero.Bytes(), prevBytes)
-	log.Println("Previous:", prevCommit)
-
 	amts := []uint64{1, 4999999998}
 	rcpts := []WalletPublicKey{
 		NewPrivateKey().PublicKey(),
@@ -50,10 +43,6 @@ func pksAndSecret() ([]ECCPoint, *big.Int) {
 		pks = append(pks, ECCPoint{pkx, pky})
 	}
 
-	log.Println("pk0:", pks[0])
-	x, y := CURVE.Params().ScalarBaseMult(sec.Bytes())
-	log.Println("sk0G:", ECCPoint{x, y})
-
 	return pks, sec
 }
 
@@ -66,11 +55,6 @@ func commitmentsAndBF(amt uint64) ([]ECCPoint, *big.Int) {
 		commit := RangeCommit(amt, b)
 		if i == 0 {
 			yi = b
-			log.Println("RangeCommit amt:", amt, "pt:", commit.ECCPoint)
-
-			amtBytes := UIntBytes(amt)
-			exp := PedersenSum(b.Bytes(), amtBytes)
-			log.Println("Expected commit:", exp)
 		}
 		ics = append(ics, commit.ECCPoint)
 	}

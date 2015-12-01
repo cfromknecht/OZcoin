@@ -59,9 +59,10 @@ func (m *Miner) run() {
 			updateTime = time.After(30 * time.Second)
 			recentlyUpdated = false
 
-			_, err := m.Wallet.SignTxn(&miningAddress, 1, 1)
+			// Sign request for testing
+			_, err = m.Wallet.SignTxn(&miningAddress, 1, 1)
 			if err != nil {
-				continue
+				log.Println(err)
 			}
 
 		default:

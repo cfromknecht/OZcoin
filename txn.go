@@ -172,10 +172,6 @@ func BuildOutputs(amts []uint64, rcpts []WalletPublicKey) ([]Output, *big.Int) {
 		blind := Hash(ECCPoint{qBx, qBy}.Bytes())
 
 		commit := RangeCommit(amts[i], blind.Int())
-		log.Println("Commited to:", commit.ECCPoint)
-		amtBytes := UIntBytes(amts[i])
-		commitp := PedersenSum(blind.Bytes(), amtBytes)
-		log.Println("Computed commitment:", commitp)
 
 		blindSum.Add(blindSum, blind.Int())
 		blindSum.Mod(blindSum, CURVE.Params().N)

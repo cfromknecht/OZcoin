@@ -285,10 +285,6 @@ func (ws *WalletServer) handleSign(w http.ResponseWriter, r *http.Request) {
 		rcpts = []WalletPublicKey{req.Address, ws.Privs[0].PublicKey()}
 	}
 
-	log.Println("pk:", fundingTxn.Output.PublicKey)
-	skGx, skGy := CURVE.Params().ScalarBaseMult(sk.Bytes())
-	log.Println("skG:", skGx, skGy)
-
 	txn := ws.NewTxn(inputs, sk, yi, 0, amts, rcpts, req.Fee)
 
 	ws.TxnChan <- *txn
