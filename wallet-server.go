@@ -81,6 +81,33 @@ func NewWalletServer(miningAddress, svpAddress, walletAddress, password string) 
 	return ws
 }
 
+type PasswordMsg struct {
+	Password string `json:"password"`
+}
+
+type TokenMsg struct {
+	Token SHA256Sum `json:"token"`
+}
+
+type KeyMsg struct {
+	Key WalletPublicKey `json:"key"`
+}
+
+type TrackingKeysMsg struct {
+	TrackingKeys []WalletTrackingKey `json:"track_keys"`
+}
+
+type BalanceMsg struct {
+	Balance uint64            `json:"balance"`
+	Outputs []OutputPlaintext `json:"outputs"`
+}
+
+type SignMsg struct {
+	Address WalletPublicKey `json:"address"`
+	Amount  uint64          `json:"amount"`
+	Fee     uint64          `json:"fee"`
+}
+
 type OutputPlaintext struct {
 	Output  *Output `json:"output"`
 	HashPub string  `json:"hash_pub"`
@@ -96,27 +123,6 @@ func (op *OutputPlaintext) Json() []byte {
 	}
 
 	return b
-}
-
-type BalanceMsg struct {
-	Balance uint64            `json:"balance"`
-	Outputs []OutputPlaintext `json:"outputs"`
-}
-
-type TrackingKeysMsg struct {
-	TrackingKeys []WalletTrackingKey `json:"track_keys"`
-}
-
-type PasswordMsg struct {
-	Password string `json:"password"`
-}
-
-type TokenMsg struct {
-	Token SHA256Sum `json:"token"`
-}
-
-type KeyMsg struct {
-	Key WalletPublicKey `json:"key"`
 }
 
 /*
@@ -212,12 +218,6 @@ func (ws *WalletServer) handleTracking(w http.ResponseWriter, r *http.Request) {
 		TrackingKeys: addrs,
 	}
 	jsonWrite(w, res)
-}
-
-type SignMsg struct {
-	Address WalletPublicKey `json:"address"`
-	Amount  uint64          `json:"amount"`
-	Fee     uint64          `json:"fee"`
 }
 
 func (ws *WalletServer) handleSign(w http.ResponseWriter, r *http.Request) {
@@ -674,4 +674,38 @@ func (ws *WalletServer) deleteTxns(b Block) error {
 	}
 
 	return nil
+}
+
+/*
+ * Database Connections
+ */
+
+func (w *WalletServer) OpenAuthDB() *db.DB {
+	authDB, err := db.OpenFile(w.AuthDBPath, nil)
+	if err != nil {
+		log.Println("[OpenAuthDB]:", err)
+		panic(err)
+	}
+
+	return authDB
+}
+
+func (w *WalletServer) OpenPrivDB() *db.DB {
+	privDB, err := db.OpenFile(w.PrivPDBath, nil)
+	if err != nil {
+		log.Println("[OpenPrivDB]:", err)
+		panic(err)
+	}
+
+	return privDB
+}
+
+func (w *WalletServer) OpenTxnDB() *db.DB {
+	txnDB, err := db.OpenFile(w.TxnDBPath, nil)
+	if err != nil {
+		log.Println("[OpenTxnDB]:", err)
+		panic(err)
+	}
+
+	return txnDB
 }

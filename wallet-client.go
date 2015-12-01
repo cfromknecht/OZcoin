@@ -208,37 +208,3 @@ func MarshalPassword(password string) ([]byte, error) {
 
 	return b, nil
 }
-
-/*
- * Database Connections
- */
-
-func (w *WalletServer) OpenAuthDB() *db.DB {
-	authDB, err := db.OpenFile(w.AuthDBPath, nil)
-	if err != nil {
-		log.Println("[OpenAuthDB]:", err)
-		panic(err)
-	}
-
-	return authDB
-}
-
-func (w *WalletServer) OpenPrivDB() *db.DB {
-	privDB, err := db.OpenFile(w.PrivPDBath, nil)
-	if err != nil {
-		log.Println("[OpenPrivDB]:", err)
-		panic(err)
-	}
-
-	return privDB
-}
-
-func (w *WalletServer) OpenTxnDB() *db.DB {
-	txnDB, err := db.OpenFile(w.TxnDBPath, nil)
-	if err != nil {
-		log.Println("[OpenTxnDB]:", err)
-		panic(err)
-	}
-
-	return txnDB
-}
