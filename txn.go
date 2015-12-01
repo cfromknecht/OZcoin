@@ -194,6 +194,239 @@ func BuildOutputs(amts []uint64, rcpts []WalletPublicKey) ([]Output, *big.Int) {
 }
 
 /*
+ * Prevalidates the txns in a block.
+ */
+func (c *Client) ValidTxns(b Block) bool {
+	// Check validity of each transaction
+	for i, txn := range b.Txns {
+		if i == 0 {
+			if !ValidCoinbaseTxn(txn) {
+				log.Println("Invalid CoinbaseTxn")
+				return false
+			}
+		} else {
+			if !ValidTxn(txn) {
+				log.Println("Invalid Txn")
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+/*
+ * Less intensive txn validations.
+ */
+func ValidTxn(txn Txn) bool {
+
+	if txn.Body.Inputs == nil || len(txn.Body.Inputs) != TXN_NUM_INPUTS {
+		log.Println("Invalid number of txn inputs")
+		return false
+	}
+
+	if txn.Body.Outputs == nil || len(txn.Body.Outputs) != TXN_NUM_OUTPUTS {
+		log.Println("Invalid number of txn outputs")
+		return false
+	}
+
+	if len(txn.Json()) >= MAX_BLOCK_SIZE {
+		log.Println("TXN TOO BIG")
+		return false
+	}
+
+	for _, output := range txn.Body.Outputs {
+		if output.PublicKey.Empty() ||
+			output.DestKey.Empty() ||
+			output.BlindSeed.Empty() ||
+			output.Commit.Empty() {
+			log.Println("Missing data")
+			return false
+		}
+	}
+
+	return true
+}
+
+/*
+ * Less intensive coinbase txn validations.
+ */
+func ValidCoinbaseTxn(txn Txn) bool {
+	if txn.Body.Inputs == nil || len(txn.Body.Inputs) != 1 {
+		log.Println("Invalid number of txn inputs")
+		return false
+	}
+
+	input := txn.Body.Inputs[0]
+	if (input != SHA256Sum{}) {
+		log.Println("Invalid coinbase inputs")
+		return false
+	}
+
+	if txn.Body.Outputs == nil || len(txn.Body.Outputs) != 1 {
+		log.Println("Invalid number of txn outputs")
+		return false
+	}
+
+	if len(txn.Json()) >= MAX_BLOCK_SIZE {
+		log.Println("Txn exceeds MAX_BLOCK_SIZE")
+		return false
+	}
+
+	output := txn.Body.Outputs[0]
+
+	if output.PublicKey.Empty() ||
+		output.DestKey.Empty() ||
+		output.BlindSeed.Empty() ||
+		output.Commit.Empty() {
+		log.Println("Missing data")
+		return false
+	}
+
+	return true
+}
+
+/*
+ * Verifies a block's transactions given the forking context.
+ */
+func (c *Client) VerifyTxns(b Block, mainPath, sidePath []SHA256Sum) bool {
+	// Check that mainPath and sidePath are set properly
+	if (mainPath == nil && sidePath != nil) ||
+		(mainPath != nil && sidePath == nil) {
+		panic("Both mainPath and sidePath should be set or nil")
+	}
+
+	// Compute invalid unspent txns and preimages
+	mainTxns, mainPimgs, err := c.ForkTxnsAndPreimages(mainPath)
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+
+	sideTxns, sidePimgs, err := c.ForkTxnsAndPreimages(sidePath)
+	if err != nil {
+		log.Println(err)
+		return false
+	}
+
+	coinbase := CoinbaseValue(b.Header.SeqNum)
+
+	// Check validity of each transaction
+	for i, txn := range b.Txns {
+		if i != 0 {
+			if !c.VerifyTxn(txn, mainTxns, sideTxns, mainPimgs, sidePimgs) {
+				log.Println("Invalid Txn")
+				return false
+			}
+
+			coinbase += txn.Body.Fee
+		}
+	}
+
+	if !c.VerifyCoinbaseTxn(b.Txns[0], coinbase) {
+		log.Println("Invalid Coinbase txn")
+		return false
+	}
+
+	return true
+}
+
+/*
+ * More intensive txn validation.
+ */
+func (c *Client) VerifyTxn(txn Txn, mainTxns, sideTxns map[SHA256Sum]Output, mainPimgs, sidePimgs map[SHA256Sum]struct{}) bool {
+	// Check that maps are all nil or all non-nil
+	forking := false
+	if mainTxns != nil &&
+		mainPimgs != nil &&
+		sideTxns != nil &&
+		sidePimgs != nil {
+
+		forking = true
+	} else if !(mainTxns == nil &&
+		mainPimgs == nil &&
+		sideTxns == nil &&
+		sidePimgs == nil) {
+
+		panic("All maps should be nil or non-nil")
+	}
+
+	// Check for preimage
+	pimg := Hash(txn.Sig.Preimage.Bytes())
+	found := c.GetPreimage(pimg)
+
+	if forking {
+		_, mainok := mainPimgs[pimg]
+		if found || mainok {
+			return false
+		}
+	} else if found {
+		return false
+	}
+
+	// Get inputs
+	inputs := []Output{}
+	for _, inp := range txn.Body.Inputs {
+		output, err := c.FindOutput(inp)
+		if err != nil {
+			log.Println("Could not load txn")
+			return false
+		}
+
+		_, err = c.MapToBlock(inp)
+
+		// Check main forks for output
+		if forking {
+			_, mainok := mainTxns[inp]
+			if err != nil || mainok {
+				return false
+			}
+
+		} else if err != nil {
+			log.Println("No map:", err)
+			return false
+		}
+
+		inputs = append(inputs, *output)
+	}
+
+	// Get Public Keys and commitments
+	pks, ics := []ECCPoint{}, []ECCPoint{}
+	for _, inp := range inputs {
+		pks = append(pks, inp.DestKey)
+		ics = append(ics, inp.Commit.ECCPoint)
+	}
+
+	if !txn.VerifyOZRS(pks, ics) {
+		return false
+	}
+
+	for _, output := range txn.Body.Outputs {
+		if !output.Commit.RangeProof.Verify() {
+			return false
+		}
+	}
+
+	return true
+}
+
+/*
+ *More intensive coinbase validations.
+ */
+func (c *Client) VerifyCoinbaseTxn(txn Txn, coinbase uint64) bool {
+	coinbaseBytes := UIntBytes(coinbase)
+	cx, cy := CURVE.Params().ScalarMult(H.X, H.Y, coinbaseBytes)
+	cy.Neg(cy)
+
+	commit := txn.Body.Outputs[0].Commit
+	cx, cy = CURVE.Params().Add(commit.X, commit.Y, cx, cy)
+
+	zero := &big.Int{}
+
+	return zero.Cmp(cx) == 0 && zero.Cmp(cy) == 0
+}
+
+/*
  * The json bytes to be signed.
  */
 func (txn Txn) BodyJson() []byte {

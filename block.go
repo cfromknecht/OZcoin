@@ -1,6 +1,8 @@
 package ozcoin
 
 import (
+	db "github.com/syndtr/goleveldb/leveldb"
+
 	"encoding/json"
 	"errors"
 	"log"
@@ -162,6 +164,143 @@ func GenesisBlock(address WalletPublicKey) Block {
 	}
 
 	return b
+}
+
+/*
+ * Less intensive validations.
+ */
+func (c *Client) PrevalidBlock(b Block) bool {
+	if b.Txns == nil || len(b.Txns) == 0 {
+		log.Println("Txns nil or len 0")
+		return false
+	}
+
+	if !c.ValidTxns(b) {
+		log.Println("Invalid txns")
+		return false
+	}
+
+	if !b.VerifyMerkleHash() {
+		log.Println("Merkle hash failed")
+		return false
+	}
+
+	return true
+}
+
+/*
+ * More intensive validations.
+ */
+func (c *Client) PostValidBlock(b Block, mainPath, sidePath []SHA256Sum) bool {
+	if !c.ValidDifficulty(b) {
+		return false
+	}
+
+	// Check median of last 11 blocks
+
+	if !c.VerifyTxns(b, mainPath, sidePath) {
+		return false
+	}
+
+	return true
+}
+
+/*
+ * Computes merkle hash and compares with block header.
+ */
+func (b Block) VerifyMerkleHash() bool {
+	existing := b.Header.MerkleRoot
+	computed := b.MerkleHash()
+	return computed == existing
+}
+
+/*
+ * Computes merkle hash of txns
+ */
+func (b Block) MerkleHash() SHA256Sum {
+	// Calculate number of initial slots
+	numSlots := 1
+	for numSlots < len(b.Txns) {
+		numSlots *= 2
+	}
+
+	// Fill in slots
+	slots := make([]SHA256Sum, numSlots)
+	for i := 0; i < len(slots); i++ {
+		if i < len(b.Txns) {
+			slots[i] = Hash(b.Txns[i].Json())
+		} else {
+			slots[i] = SHA256Sum{}
+		}
+	}
+
+	// Combine and reduce
+	for len(slots) > 1 {
+		numNewSlots := len(slots) / 2
+		newSlots := make([]SHA256Sum, numNewSlots)
+		for i := 0; i < numNewSlots; i++ {
+			bytes := []byte{}
+			bytes = append(bytes, slots[2*i][:]...)
+			bytes = append(bytes, slots[2*i+1][:]...)
+			newSlots[i] = Hash(bytes)
+		}
+		slots = slots[:numNewSlots]
+	}
+
+	return slots[0]
+}
+
+/*
+ * Writes block depending on client type
+ */
+func (c *Client) WriteBlock(b Block) error {
+	if c.Type == BLOCKCHAIN_CLIENT {
+		log.Println("Writing block")
+		err := c.PutBlock(b)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+	}
+
+	// Build batched writes
+	pimgBatch := &db.Batch{}
+	txnPoolBatch := &db.Batch{}
+	for i, txn := range b.Txns {
+		// Only preimages for non-coinbase txns
+		if i != 0 {
+			pimgHash := Hash(txn.Sig.Preimage.Bytes()).Bytes()
+			pimgBatch.Put(pimgHash, pimgHash)
+			log.Println("Deleteing pimg from txn pool")
+			txnPoolBatch.Delete(pimgHash)
+		}
+	}
+
+	// Write preimages
+	err := c.dbm.pimgDB.Write(pimgBatch, nil)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	// Write txns
+	err = c.PutMapToBlock(b)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	log.Println("Writing to txn pool batch")
+	// Write txn pool
+	err = c.dbm.txnPoolDB.Write(txnPoolBatch, nil)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	log.Println("Write block success")
+
+	return nil
 }
 
 /*
