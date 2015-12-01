@@ -2,7 +2,6 @@ package ozcoin
 
 import (
 	"crypto/elliptic"
-	"fmt"
 	"math/big"
 )
 
@@ -31,67 +30,6 @@ func RangeCommit(amt uint64, targetBlind *big.Int) Commitment {
 	}
 }
 
-func CommitTxn(inputs, outputs []uint64) ([]Commitment,
-	[]Commitment) {
-	pcsi := make([]Commitment, len(inputs))
-	pcso := make([]Commitment, len(outputs))
-
-	inTotal := &big.Int{}
-	for i, inAmt := range inputs {
-		r := RandomInt()
-		inTotal.Add(inTotal, r)
-		pcsi[i] = RangeCommit(inAmt, r)
-	}
-
-	outTotal := &big.Int{}
-	for i, outAmt := range outputs {
-		r := &big.Int{}
-		if i == len(outputs)-1 {
-			r.Sub(inTotal, outTotal)
-			r.Mod(r, CURVE.Params().N)
-		} else {
-			r = RandomInt()
-			outTotal.Add(outTotal, r)
-		}
-
-		pcso[i] = RangeCommit(outAmt, r)
-	}
-
-	return pcsi, pcso
-}
-
-func SumZero(pcsi, pcso []Commitment) bool {
-	ix, iy := &big.Int{}, &big.Int{}
-
-	for i, c := range pcsi {
-		if !c.RangeProof.Verify() {
-			fmt.Println("c", i, "failed to verify")
-			return false
-		}
-
-		ix, iy = CURVE.Params().Add(ix, iy, c.X, c.Y)
-	}
-
-	ox, oy := &big.Int{}, &big.Int{}
-	for i, c := range pcso {
-		if !c.RangeProof.Verify() {
-			fmt.Println("c", i, "failed to verify")
-			return false
-		}
-		ox, oy = CURVE.Params().Add(ox, oy, c.X, c.Y)
-	}
-
-	return ix.Cmp(ox) == 0 && iy.Cmp(oy) == 0
-}
-
-func pointFromRAndAmt(r *big.Int, amt int64) (*big.Int, *big.Int) {
-	amtInt := big.NewInt(amt)
-
-	xGx, xGy := CURVE.Params().ScalarBaseMult(r.Bytes())
-	aHx, aHy := CURVE.Params().ScalarMult(H.X, H.Y, amtInt.Bytes())
-
-	return CURVE.Params().Add(xGx, xGy, aHx, aHy)
-}
 func computeH() ECCPoint {
 	hx, hy := CURVE.Params().ScalarBaseMult(big.NewInt(11235).Bytes())
 	if !CURVE.Params().IsOnCurve(hx, hy) {

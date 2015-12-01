@@ -1,8 +1,6 @@
 package ozcoin
 
 import (
-	db "github.com/syndtr/goleveldb/leveldb"
-
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
