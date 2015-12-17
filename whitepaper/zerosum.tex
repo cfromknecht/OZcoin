@@ -89,17 +89,17 @@ definition, this inequality between coins prevents Bitcoin from being fungible.
 
 The goal of this work is to design a more fungible cryptocurrency.  In order to
 do so, we tackle two distinct problems that allow a third party to discriminate
-against the coins used in a standard Bitcoin transaction.  The first is
-linkability, which allows an individual to trace the history of a transaction
-and determine the accounts that have held the coin before.  This work builds
-upon  much of CryptoNote's \cite{S13} anonymous transaction scheme to ensure
-the destination is obfuscated, preventing third parties from explicitly
+against the coins used in a standard Bitcoin transaction.  The first is lack of
+anonymity, which allows an individual to trace the history of a transaction and
+determine the accounts that have held the coin before.  This work builds upon
+much of CryptoNote's \cite{S13} anonymous transaction scheme to ensure that the
+sender and receiver are obfuscated, preventing third parties from explicitly
 backwards constructing a path to the sender.  
 
-However, this alone is not enough.  The transaction amounts are still visible,
-which allows any two transactions of equal amounts to be possibly linked, and
-thus jeopardizing unlinkability.  Therefore, our solution must also hide
-transaction amounts.  This work begins with a similar approach to the one
+However, this alone is not enough.  Since the transaction amounts are still
+visible, this allows any two transactions of equal amounts to be possibly
+linked, and thus jeopardizing anonymity.  Therefore, our solution must also
+hide transaction amounts.  This work begins with a similar approach to the one
 outlined by Gregory Maxwell's Confidential Transaction scheme \cite{M15}.  This
 allows the sender to prove that the value is within a certain range, say
 $[0,2^l)$.  In order to publicly verify this, the signer must coordinate the
@@ -147,7 +147,7 @@ the $l$ bits $\beta_i$ in {\ov}.  These blinding factors are computed by
   \gamma^{(1)} &= \hs(\oy) \\
   \gamma^{(i+1)} &= 
     \begin{cases}
-      \oy - \sum_{j=1}^{i} \gamma^{(j)} &: i=l-1 \\
+      \oy - \sum_{j=1}^{i} \gamma^{(j)} &: i=l \\
       \hs(\gamma^{(i)}) &: otherwise.
     \end{cases}
 \end{align*}
@@ -193,6 +193,7 @@ changes.  The construction of the OZRS is described in the subsequent section.
   & \text{Blind Seeds: } && \{ Q_i = q_i G \}_m                           \\%&& [33m \text{ bytes}] \\
   & \text{Commitments: } && \{ \oiC = \oiy G + \oiv H \}_m                \\%&& [33m \text{ bytes}] \\
   & \text{Range Proofs: } && \{ \pi_l(\oiC) \}_m                          \\%&& [(33l + 32(2l+1))m \text{ bytes}] \\
+  & \text{Fee } &&                                                       \\%&& [8 bytes] \\
   & \text{\bf{SIGNATURE}} &&                                              \\%&& \\
   & \text{OZRS: } && \Pi = (I, e, r_1, \dots, r_n, s_1, \dots, s_n)       \\%&& [32(2n+1) \text{ bytes}] 
 \end{align*} 
@@ -206,7 +207,7 @@ be the index of signer's public key {\spk}.  Furthermore, let $C = \{ {\iC} =
 commits each {\ipk} to the value {\iv}.  We call each {\iy} an input blinding
 factor.  After constructing a transaction, the signer also holds the new output
 blinding factor {\oy} and total output value {\ov} in
-\[ \oC = \oy G + \ov H = \sum_{i=1}^{m} \oiC = \sum_{i=1}^m \oiy G + \oiv H ,\]
+\[ \oC = \oy G + \ov H = \sum_{i=1}^{m} \oiC + fee \cdot H, \]
 where each $\oiC$ represents an individual output commitment.  Here we present
 a ring signature formulation constructed as an AOS ring signature \cite{AOS02}
 that uses a three-way chameleon hash to prove the following properties:
@@ -224,7 +225,7 @@ Knowledge on a message $M$ such that all values other than {\sx}, {\sy}, and
 {\oy} are known to the prover, defined 
 \begin{align*}
 \nizkpok[M](\sx, \sy, \oy) : \{ \exists i : 
-& ~ \oC - \iC = (\oy - \iy)G \\
+& ~ \oC - \iC = (\oy - \iy)G + 0 \cdot H\\
 & \land \spk = \ix G \\
 & \land I = \sx \hp(\ipk)\}.
 \end{align*}
@@ -244,7 +245,7 @@ The One-Time, Zero-Sum Ring Signature scheme consists of the four operations
     Compute the signing key's preimage and commitment differences
     \begin{align}
       I   &= {\sx} \hp({\spk}) \\
-      D_i &= {\oC} - {\iC} = ({\oy} - {\iy}) G.
+      D_i &= {\oC} - {\iC} = ({\oy} - {\iy}) G + (a^\prime - a_i)H.
     \end{align}
     Next, we build the non-interactive challenge $e$.  Choose $k_1, k_2
     \leftarrow Z_N^2$ at random.  Starting at index $*+1$, compute \[
@@ -359,7 +360,7 @@ Combining the above equations provides the following relation
 \[
   k_2^{\prime\prime} = k_2^\prime + e_*^{(2)}(\sx - x^\prime).
 \]
-Since $\nexists i : x_i = x^\prime$, the signer also knows $e_*^{(2)}$ before
+Since $\nexists i : x_i = x^\prime$, the signer knew $e_*^{(2)}$ before
 beginning the forward computation.  This yields a contradiction, since this
 requires finding a preimage of {\hs}, which succeeds with only negligible
 probability.  Therefore, OZRS is linkable under the random oracle model. \qed

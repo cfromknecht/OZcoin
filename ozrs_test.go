@@ -31,6 +31,57 @@ func TestOZRSSign(t *testing.T) {
 	}
 }
 
+func BenchmarkOZRSSign(b *testing.B) {
+	prevAmt := uint64(5000000000)
+	amts := []uint64{1, 4999999998}
+	rcpts := []WalletPublicKey{
+		NewPrivateKey().PublicKey(),
+		NewPrivateKey().PublicKey(),
+	}
+
+	pks, sec := pksAndSecret()
+	ics, yi := commitmentsAndBF(prevAmt)
+	outputs, bf := BuildOutputs(amts, rcpts)
+
+	txn := Txn{
+		Body: TxnBody{
+			Outputs: outputs,
+			Fee:     1,
+		},
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		txn.OZRSSign(pks, ics, sec, yi, 0, bf)
+	}
+}
+
+func BenchmarkOZRSVerify(b *testing.B) {
+	prevAmt := uint64(5000000000)
+	amts := []uint64{1, 4999999998}
+	rcpts := []WalletPublicKey{
+		NewPrivateKey().PublicKey(),
+		NewPrivateKey().PublicKey(),
+	}
+
+	pks, sec := pksAndSecret()
+	ics, yi := commitmentsAndBF(prevAmt)
+	outputs, bf := BuildOutputs(amts, rcpts)
+
+	txn := Txn{
+		Body: TxnBody{
+			Outputs: outputs,
+			Fee:     1,
+		},
+	}
+
+	txn.OZRSSign(pks, ics, sec, yi, 0, bf)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		txn.VerifyOZRS(pks, ics)
+	}
+}
+
 func pksAndSecret() ([]ECCPoint, *big.Int) {
 	var sec *big.Int
 	pks := []ECCPoint{}

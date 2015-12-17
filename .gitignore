@@ -2,10 +2,13 @@
 *.sw*
 
 # whitepaper temp files
-whitepaper/*.log
-whitepaper/*.blg
 whitepaper/*.aux
+whitepaper/*.bcf
+whitepaper/*.blg
+whitepaper/*.log
+whitepaper/*.out
 whitepaper/*.pdf
+whitepaper/*.run.xml
 
 # db files
 miner/db/*

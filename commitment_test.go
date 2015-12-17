@@ -42,3 +42,20 @@ func TestRangeCommit(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkRangeCommit(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		r := &big.Int{}
+		_ = RangeCommit(50, r)
+	}
+}
+
+func BenchmarkRangeCommitVerify(b *testing.B) {
+	r := &big.Int{}
+	rp := RangeCommit(50, r)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rp.Verify()
+	}
+}
