@@ -14,6 +14,9 @@ less indistinguishable from each other, and subject to less discrimination that
 plaintext transactions.  OZcoin uses this transaction equality to provide a
 fungible cryptocurrency.
 
+This project was developed as a demo the CCN Borderless Block Party hackathon,
+it should not be regarded as an official software release in its current state.
+
 Dependencies
 ============
 `github.com/syndtr/goleveldb/leveldb`
@@ -52,3 +55,8 @@ reset the wallet databases.
 Ozcoin writeup: OZRSwriteup.pdf
 
 Website: jinglan.github.io/zebracoin
+
+Related Works
+=============
+
+Similar work for adapting CT to ring signatures can be found [here](https://eprint.iacr.org/2015/1098.pdf) courtesy of MRL.
